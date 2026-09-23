@@ -6,7 +6,14 @@
 e o mesmo login do ERP**. Assim há uma só lista de utilizadores, e o campo "empresa" dos
 projetos pode passar a apontar para as sociedades que o ERP já tem.
 
-Vão com este documento dois ficheiros: `01_schema.sql` e `02_dados.sql`.
+Vão com este documento dois ficheiros — `01_schema.sql` e `02_dados.sql` — e,
+na pasta `app/`, **o módulo React já escrito**. Está pronto para rever e publicar:
+o `app/README.md` diz como o pôr a andar e o que falta.
+
+Os dois SQL foram corridos contra um PostgreSQL 16 antes de saírem daqui, e
+podem correr duas vezes sem duplicar. (A primeira versão que recebeste tinha um
+erro meu — `fim_real` em vez de `fim` — que rebentava a meio do `01_schema.sql`
+e deixava o `02_dados.sql` sem tabelas onde escrever. Já está corrigido.)
 
 ---
 
@@ -124,9 +131,12 @@ Não deixei isto escrito porque não conheço os nomes reais das tabelas.
    e o Word funcionam.)
 2. Site novo no Netlify + subdomínio (por exemplo `projetos.riocapital.pt`), a apontar
    para o mesmo projeto Supabase.
-3. O módulo em si — React, no vosso padrão. Está tudo desenhado e testado: quadro Kanban
-   com colunas configuráveis, quadro por projeto, Gantt com linha de base e desvios,
-   lista filtrável, página de alertas de prazo, comentários e anexos por tarefa.
+3. ~~O módulo em si~~ — **já está escrito**, em `app/`. React + Vite, com o vosso
+   padrão de Supabase. Quadro Kanban, quadro por projeto, Gantt com linha de base,
+   desvios e dependências com espera, lista filtrável, alertas de prazo, painel da
+   tarefa com comentários e anexos. A lógica de agendamento está isolada em
+   `app/src/lib/schedule.js`, com 19 testes. Falta o arrastar de cartões e barras,
+   e o resumo diário.
 4. O resumo diário por email passa a ser uma Edge Function agendada + um serviço de envio
    (Resend ou equivalente), a ler `pm_subscriptions`. Cada pessoa liga e desliga o seu.
 

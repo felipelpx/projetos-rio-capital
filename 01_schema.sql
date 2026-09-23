@@ -26,7 +26,15 @@ create table if not exists public.profiles (
 );
 
 -- Uma linha por área a que a pessoa tem acesso.
--- area: 'erp' | 'projetos'      role: 'view' | 'interact' | 'admin'
+-- area: 'erp' | 'projetos'
+--
+-- Os três papéis da área 'projetos':
+--   view      Visualizador — vê tudo, não mexe em nada.
+--   interact  Editor       — cria e altera tarefas, comenta, anexa, mexe nas
+--                            datas. NÃO pode repor a data prevista (a que exige
+--                            justificação) nem gerir acessos.
+--   admin     Super admin  — tudo o que o editor faz, mais repor a data prevista
+--                            com justificação e dar/retirar acesso a pessoas.
 create table if not exists public.app_access (
   user_id   uuid not null references public.profiles(id) on delete cascade,
   area      text not null check (area in ('erp','projetos')),
@@ -152,10 +160,10 @@ create table if not exists public.pm_task_deps (
 -- Serve para o reagendamento em cascata e para assinalar dependências desrespeitadas.
 create or replace function public.pm_inicio_mais_cedo(p_task uuid)
 returns date language sql stable as $$
-  select max(t.fim_real + 1 + d.dias_espera)
+  select max(t.fim + 1 + d.dias_espera)
   from public.pm_task_deps d
   join public.pm_tasks t on t.id = d.depende_de
-  where d.task_id = p_task and t.fim_real is not null
+  where d.task_id = p_task and t.fim is not null
 $$;
 
 create table if not exists public.pm_comments (
@@ -197,6 +205,11 @@ create or replace function public.pm_repor_fim_previsto(
 ) returns void language plpgsql security definer set search_path = public as $$
 declare v_antiga date; v_nova date;
 begin
+  -- A função é SECURITY DEFINER, por isso passa por cima do RLS: a verificação
+  -- do papel tem de estar aqui dentro, senão qualquer editor a podia chamar.
+  if not public.e_admin('projetos') then
+    raise exception 'Só um super admin pode repor a data prevista.';
+  end if;
   if coalesce(trim(p_justificacao),'') = '' then
     raise exception 'A justificação é obrigatória.';
   end if;
@@ -246,9 +259,17 @@ create policy profiles_editar_se on public.profiles for update
 
 -- Acessos: só quem administra os mexe.
 create policy acessos_ler on public.app_access for select
-  using (user_id = auth.uid() or e_admin('erp'));
-create policy acessos_gerir on public.app_access for all
+  using (user_id = auth.uid() or e_admin('erp') or tem_area('projetos'));
+
+-- Quem administra o ERP mexe em tudo.
+create policy acessos_gerir_erp on public.app_access for all
   using (e_admin('erp')) with check (e_admin('erp'));
+
+-- O super admin dos projetos dá e retira acesso à área dos projetos, e só a
+-- essa: o with check impede-o de se promover a si próprio no ERP.
+create policy acessos_gerir_projetos on public.app_access for all
+  using (e_admin('projetos') and area = 'projetos')
+  with check (e_admin('projetos') and area = 'projetos');
 
 -- Colunas do quadro.
 create policy st_ler on public.pm_statuses for select using (tem_area('projetos'));

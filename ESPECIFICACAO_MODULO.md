@@ -38,7 +38,7 @@ Está todo em `01_schema.sql`, com as políticas. Em resumo:
 
 | Tabela | Para quê |
 |---|---|
-| `app_access` | que áreas (`erp` / `projetos`) e que papel (`view`/`interact`/`admin`) cada pessoa tem |
+| `app_access` | que áreas (`erp` / `projetos`) e que papel cada pessoa tem: `admin` = Super admin, `interact` = Editor, `view` = Visualizador |
 | `pm_projects` | projeto; `empresa` (→ passar a apontar para as sociedades do ERP), `arquivado`, `owner_id` |
 | `pm_statuses` | as colunas do quadro, configuráveis pelo utilizador |
 | `pm_tasks` | tarefa; `fim` (real) e `fim_previsto` (linha de base imutável) |
@@ -57,6 +57,10 @@ Três invariantes que não se devem perder:
    outros, incluindo quem criou o quadro.
 3. **Não existe lista de "membros" à parte.** A equipa é quem tem
    `app_access('projetos')`. Só essas pessoas podem ser responsáveis por tarefas.
+   Três papéis: **Super admin** (tudo, incluindo repor a data prevista e gerir
+   acessos), **Editor** (tudo menos essas duas coisas) e **Visualizador** (só vê).
+   A restrição vive na base de dados — `pm_repor_fim_previsto` recusa quem não
+   for super admin — e não apenas no botão.
 4. **Adiar o fim de uma tarefa empurra as dependentes.** Ver a secção 3.6.
 
 ---
