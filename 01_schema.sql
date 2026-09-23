@@ -5,6 +5,9 @@
 -- Preparado para revisão do Felipe antes de aplicar.
 -- Não contém dados nem chaves. Correr no SQL Editor do Supabase.
 --
+-- Pode correr as vezes que forem precisas: tudo aqui apaga-se antes de se
+-- criar, por isso repetir não dá erro nem estraga o que já existe.
+--
 -- NOTA IMPORTANTE (ler a secção 6 antes de aplicar em produção):
 -- a separação entre quem vê o ERP e quem vê só os Projetos tem de ser
 -- imposta AQUI, nas políticas, e não pelo endereço do site.
@@ -135,6 +138,7 @@ begin
   return new;
 end;
 $$;
+drop trigger if exists pm_tasks_fim_previsto on public.pm_tasks;
 create trigger pm_tasks_fim_previsto
   before update on public.pm_tasks
   for each row execute function public.pm_fixar_fim_previsto();
@@ -155,6 +159,13 @@ create table if not exists public.pm_task_deps (
   primary key (task_id, depende_de),
   check (task_id <> depende_de)
 );
+-- Quem criou esta tabela com a primeira versão do ficheiro não tem a coluna.
+alter table public.pm_task_deps
+  add column if not exists dias_espera integer not null default 0;
+do $$ begin
+  alter table public.pm_task_deps
+    add constraint pm_task_deps_espera_ck check (dias_espera >= 0 and dias_espera <= 365);
+exception when duplicate_object then null; end $$;
 
 -- A data mais cedo a que uma tarefa pode arrancar, dadas todas as antecessoras.
 -- Serve para o reagendamento em cascata e para assinalar dependências desrespeitadas.
@@ -251,39 +262,54 @@ alter table public.pm_comments       enable row level security;
 alter table public.pm_attachments    enable row level security;
 alter table public.pm_subscriptions  enable row level security;
 
+-- Políticas de versões anteriores deste ficheiro que entretanto mudaram de nome.
+-- Sem isto ficavam penduradas, a conceder acessos que já não se controlam aqui.
+drop policy if exists acessos_gerir on public.app_access;
+
 -- Perfis: cada um vê-se a si; quem gere os projetos vê a equipa (para atribuir).
+drop policy if exists profiles_ler on public.profiles;
 create policy profiles_ler on public.profiles for select
   using (id = auth.uid() or tem_area('projetos') or tem_area('erp'));
+drop policy if exists profiles_editar_se on public.profiles;
 create policy profiles_editar_se on public.profiles for update
   using (id = auth.uid()) with check (id = auth.uid());
 
 -- Acessos: só quem administra os mexe.
+drop policy if exists acessos_ler on public.app_access;
 create policy acessos_ler on public.app_access for select
   using (user_id = auth.uid() or e_admin('erp') or tem_area('projetos'));
 
 -- Quem administra o ERP mexe em tudo.
+drop policy if exists acessos_gerir_erp on public.app_access;
 create policy acessos_gerir_erp on public.app_access for all
   using (e_admin('erp')) with check (e_admin('erp'));
 
 -- O super admin dos projetos dá e retira acesso à área dos projetos, e só a
 -- essa: o with check impede-o de se promover a si próprio no ERP.
+drop policy if exists acessos_gerir_projetos on public.app_access;
 create policy acessos_gerir_projetos on public.app_access for all
   using (e_admin('projetos') and area = 'projetos')
   with check (e_admin('projetos') and area = 'projetos');
 
 -- Colunas do quadro.
+drop policy if exists st_ler on public.pm_statuses;
 create policy st_ler on public.pm_statuses for select using (tem_area('projetos'));
+drop policy if exists st_gerir on public.pm_statuses;
 create policy st_gerir on public.pm_statuses for all
   using (pode_escrever('projetos')) with check (pode_escrever('projetos'));
 
 -- Projetos: os partilhados para quem tem a área; os particulares só para o dono.
+drop policy if exists proj_ler on public.pm_projects;
 create policy proj_ler on public.pm_projects for select
   using (tem_area('projetos') and (owner_id is null or owner_id = auth.uid()));
+drop policy if exists proj_criar on public.pm_projects;
 create policy proj_criar on public.pm_projects for insert
   with check (pode_escrever('projetos') and (owner_id is null or owner_id = auth.uid()));
+drop policy if exists proj_alterar on public.pm_projects;
 create policy proj_alterar on public.pm_projects for update
   using (pode_escrever('projetos') and (owner_id is null or owner_id = auth.uid()))
   with check (pode_escrever('projetos') and (owner_id is null or owner_id = auth.uid()));
+drop policy if exists proj_apagar on public.pm_projects;
 create policy proj_apagar on public.pm_projects for delete
   using (pode_escrever('projetos') and (owner_id is null or owner_id = auth.uid()));
 
@@ -297,44 +323,58 @@ returns boolean language sql stable as $$
            where p.id = p_project and (p.owner_id is null or p.owner_id = auth.uid())));
 $$;
 
+drop policy if exists tar_ler on public.pm_tasks;
 create policy tar_ler on public.pm_tasks for select
   using (pm_projeto_visivel(project_id, owner_id));
+drop policy if exists tar_escrever on public.pm_tasks;
 create policy tar_escrever on public.pm_tasks for all
   using (pode_escrever('projetos') and pm_projeto_visivel(project_id, owner_id))
   with check (pode_escrever('projetos') and pm_projeto_visivel(project_id, owner_id));
 
 -- Tabelas dependentes: seguem a visibilidade da tarefa.
+drop policy if exists atr_ler on public.pm_task_assignees;
 create policy atr_ler on public.pm_task_assignees for select
   using (exists (select 1 from public.pm_tasks t where t.id = task_id));
+drop policy if exists atr_escrever on public.pm_task_assignees;
 create policy atr_escrever on public.pm_task_assignees for all
   using (pode_escrever('projetos') and exists (select 1 from public.pm_tasks t where t.id = task_id))
   with check (pode_escrever('projetos') and exists (select 1 from public.pm_tasks t where t.id = task_id));
 
+drop policy if exists dep_ler on public.pm_task_deps;
 create policy dep_ler on public.pm_task_deps for select
   using (exists (select 1 from public.pm_tasks t where t.id = task_id));
+drop policy if exists dep_escrever on public.pm_task_deps;
 create policy dep_escrever on public.pm_task_deps for all
   using (pode_escrever('projetos') and exists (select 1 from public.pm_tasks t where t.id = task_id))
   with check (pode_escrever('projetos') and exists (select 1 from public.pm_tasks t where t.id = task_id));
 
+drop policy if exists com_ler on public.pm_comments;
 create policy com_ler on public.pm_comments for select
   using (exists (select 1 from public.pm_tasks t where t.id = task_id));
+drop policy if exists com_criar on public.pm_comments;
 create policy com_criar on public.pm_comments for insert
   with check (pode_escrever('projetos') and autor_id = auth.uid()
               and exists (select 1 from public.pm_tasks t where t.id = task_id));
 -- Só o autor edita, e nunca um registo de replaneamento.
+drop policy if exists com_editar on public.pm_comments;
 create policy com_editar on public.pm_comments for update
   using (autor_id = auth.uid() and tipo = 'comentario')
   with check (autor_id = auth.uid() and tipo = 'comentario');
+drop policy if exists com_apagar on public.pm_comments;
 create policy com_apagar on public.pm_comments for delete
   using (autor_id = auth.uid() and tipo = 'comentario');
 
+drop policy if exists anx_ler on public.pm_attachments;
 create policy anx_ler on public.pm_attachments for select
   using (exists (select 1 from public.pm_tasks t where t.id = task_id));
+drop policy if exists anx_escrever on public.pm_attachments;
 create policy anx_escrever on public.pm_attachments for all
   using (pode_escrever('projetos')) with check (pode_escrever('projetos'));
 
 -- Subscrições: cada pessoa só mexe na sua; todas se leem (para o envio).
+drop policy if exists sub_ler on public.pm_subscriptions;
 create policy sub_ler on public.pm_subscriptions for select using (tem_area('projetos'));
+drop policy if exists sub_minha on public.pm_subscriptions;
 create policy sub_minha on public.pm_subscriptions for all
   using (user_id = auth.uid()) with check (user_id = auth.uid());
 

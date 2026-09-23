@@ -15,8 +15,10 @@ Destino: site próprio no Netlify, a partilhar o mesmo Supabase e o mesmo login 
 | `01_schema.sql` | Tabelas do módulo, políticas RLS, trigger da linha de base e a função de replaneamento. |
 | `03_testar_acessos.sql` | Confere os três papéis. Correr depois dos outros dois, antes de dar acesso a alguém. |
 | `02_dados.sql` | Os 7 projetos, 37 tarefas e 14 dependências que já existem, com as esperas entre tarefas. Pode correr duas vezes sem duplicar. |
+| `04_anexos.sql` | Permissões do bucket `pm-anexos`, onde ficam os ficheiros anexados às tarefas. |
 | `ESPECIFICACAO_MODULO.md` | Especificação funcional das cinco vistas, invariantes dos dados e armadilhas já encontradas. |
 | `quadro_atual.html` | O quadro a funcionar hoje, num único ficheiro. Serve de referência visual e de comportamento. |
+| `netlify.toml` | Configuração do Netlify. Tem de ficar na raiz — é onde ele a procura. |
 | `app/` | **O módulo React**, pronto a publicar no Netlify. Ver `app/README.md`. |
 
 Os dois SQL foram testados contra um PostgreSQL 16 e podem correr duas vezes sem duplicar.

@@ -1,0 +1,16 @@
+# O Netlify lê este ficheiro sozinho. Com o `base` definido aqui, não é preciso
+# configurar nada no painel: o build corre dentro de app/ e publica app/dist.
+[build]
+  base = "app"
+  command = "npm run build"
+  publish = "dist"          # relativo ao base, ou seja app/dist
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Uma aplicação de página única: qualquer endereço devolve o index, senão
+# recarregar a página numa vista que não a inicial dava "Page not found".
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

@@ -29,10 +29,11 @@ corridos (estão na raiz do repositório).
 
 ## Netlify
 
-O `netlify.toml` já tem o que é preciso: build `npm run build`, publicação de
-`dist`, e o redirecionamento que faz uma aplicação de página única funcionar em
-qualquer endereço. Falta só pôr as duas variáveis em
-**Site settings → Environment variables**.
+O `netlify.toml` está **na raiz do repositório**, não aqui — é onde o Netlify o
+procura. Já traz tudo: `base = "app"`, o comando de build, a pasta a publicar e o
+redirecionamento que faz uma aplicação de página única aguentar um F5 em
+qualquer vista. No painel não é preciso configurar nada além das duas variáveis
+em **Site settings → Environment variables**.
 
 Para o subdomínio (por exemplo `projetos.riocapital.pt`), é um CNAME a apontar
 para o site do Netlify.

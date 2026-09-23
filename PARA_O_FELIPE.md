@@ -126,9 +126,8 @@ Não deixei isto escrito porque não conheço os nomes reais das tabelas.
 
 ## 4. Depois disso
 
-1. Bucket privado `pm-anexos` no Storage, com leitura para `tem_area('projetos')` e
-   escrita para `pode_escrever('projetos')`. (Ao contrário do quadro atual, aqui o Excel
-   e o Word funcionam.)
+1. Bucket privado `pm-anexos` no Storage; as políticas estão prontas no
+   `04_anexos.sql`. (Ao contrário do quadro atual, aqui o Excel e o Word funcionam.)
 2. Site novo no Netlify + subdomínio (por exemplo `projetos.riocapital.pt`), a apontar
    para o mesmo projeto Supabase.
 3. ~~O módulo em si~~ — **já está escrito**, em `app/`. React + Vite, com o vosso
