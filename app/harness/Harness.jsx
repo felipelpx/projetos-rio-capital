@@ -12,6 +12,7 @@ import TaskDrawer from "../src/components/TaskDrawer.jsx";
 import MultiSelect from "../src/components/MultiSelect.jsx";
 import * as F from "./dados.js";
 import { NIVEIS } from "../src/lib/format.js";
+import Conta from "../src/components/Conta.jsx";
 
 const VISTAS = [["quadro","Quadro"],["projetos","Projetos"],["gantt","Gantt"],["lista","Lista"],["alertas","Alertas"]];
 
@@ -97,6 +98,7 @@ export default function Harness() {
           valor={filtros.pessoas} onChange={(v) => setFiltros({ ...filtros, pessoas: v })}
           aberto={abertoMulti === "top"} onAbrir={(a) => setAbertoMulti(a ? "top" : null)} />
         {papel !== "view" && <button className="btn btn-primary">Nova tarefa</button>}
+        <Conta email="juliana@riocapital.pt" papel={papel} />
       </header>
       <div className="banner info">
         <span>

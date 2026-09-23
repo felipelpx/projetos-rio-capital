@@ -10,7 +10,7 @@ Supabase e ao Netlify).
 No repositório `projetos-rio-capital`: **Add file → Upload files**, arrastar e
 **Commit changes**.
 
-São dez ficheiros na raiz mais a pasta `app/`:
+São onze ficheiros na raiz mais a pasta `app/`:
 
 | | |
 |---|---|
@@ -21,6 +21,7 @@ São dez ficheiros na raiz mais a pasta `app/`:
 | `02_dados.sql` | os 7 projetos, 37 tarefas e 14 dependências |
 | `03_testar_acessos.sql` | confere os três papéis |
 | `04_anexos.sql` | permissões do armazenamento de ficheiros |
+| `05_dar_acesso.sql` | dá acesso às pessoas da equipa |
 | `netlify.toml` | diz ao Netlify como construir o site — **tem de ficar na raiz** |
 | `ESPECIFICACAO_MODULO.md` | como cada vista se comporta |
 | `quadro_atual.html` | o quadro antigo, como referência |
@@ -76,12 +77,20 @@ vez, do princípio, e repetindo depois o 03.
 
 ### 2.2 Dar acesso às pessoas
 
-A equipa é quem tem uma linha em `app_access`:
+São dois passos por pessoa: criar a conta, e dar-lhe a área de projetos.
 
-```sql
-insert into public.app_access (user_id, area, role)
-values ('<id do utilizador>', 'projetos', 'interact');
-```
+**Criar a conta** (Supabase → **Authentication** → **Users** → **Add user** →
+*Create new user*):
+
+- email da pessoa
+- uma palavra-passe inicial
+- **ligar o *Auto Confirm User*** — senão o Supabase manda um email de
+  confirmação, e o email é precisamente o que queremos evitar
+
+A pessoa muda a palavra-passe depois, sozinha, no menu ⚙ dentro da aplicação.
+
+**Dar o acesso**: abrir o **`05_dar_acesso.sql`**, pôr os emails com o papel de
+cada um e correr. No fim imprime a lista de quem tem o quê.
 
 | `role` | na aplicação | o que pode |
 |---|---|---|
@@ -224,12 +233,12 @@ Supabase → **Authentication → URL Configuration**:
 - **Site URL**: o endereço do Netlify.
 - **Redirect URLs**: acrescentar o mesmo endereço.
 
-Sem isto, a pessoa pede o link de entrada, recebe o email, clica — e vai parar
-ao sítio errado. Parece que o login está partido, e não está.
+Com entrada por palavra-passe isto só é usado na recuperação de palavra-passe,
+mas custa dez segundos e evita uma surpresa no dia em que for preciso.
 
 ### 4.4 Experimentar
 
-Abrir o endereço, escrever o teu email, receber o link, clicar. Deves ver os
+Abrir o endereço e entrar com o email e a palavra-passe. Deves ver os
 7 projetos e as 37 tarefas.
 
 Se disser **"Sem acesso aos projetos"**, é porque falta a tua linha em
@@ -253,15 +262,22 @@ Para `projetos.riocapital.pt` em vez do endereço do Netlify:
 | "Falta a configuração" | faltam as variáveis, ou faltou voltar a publicar depois de as pôr (4.2, ponto 3) |
 | "Page not found" ao recarregar uma vista | falta o bloco `[[redirects]]` do `netlify.toml` |
 | O link do email leva ao sítio errado | falta o 4.3 |
-| "Sem acesso aos projetos" | falta a linha em `app_access` |
+| "Sem acesso aos projetos" | falta a linha em `app_access` — correr o `05_dar_acesso.sql` |
 | Entra mas não aparece nada | o `02_dados.sql` não chegou a correr, ou o RLS não deixa ver — correr as consultas de conferência do ponto 2 |
 
 ---
 
 ## Depois disto
 
-A entrada é por link de email: a pessoa escreve o email, recebe um link, clica e
-está dentro. É o mesmo login do ERP, por ser o mesmo Supabase.
+A entrada é por email e palavra-passe. As contas criam-se no painel do Supabase,
+com uma palavra-passe inicial; cada pessoa muda-a depois no menu ⚙ dentro da
+aplicação.
+
+**Porque não é por link de email:** o serviço de email que o Supabase traz de
+origem envia duas mensagens por hora e serve só para testes. Com uma equipa,
+a terceira pessoa a entrar ficava à porta. Se um dia quiserem o link por email,
+dá para voltar atrás — é preciso configurar um SMTP vosso em
+Authentication → SMTP Settings.
 
 O quadro antigo continua a funcionar enquanto for preciso. Quando o site novo
 estiver a ser usado, vale a pena gerar a exportação outra vez, para não se

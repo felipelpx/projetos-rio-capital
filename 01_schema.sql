@@ -28,6 +28,32 @@ create table if not exists public.profiles (
   criado_em   timestamptz not null default now()
 );
 
+-- Quem entra pela primeira vez fica logo com perfil. Sem isto, era preciso
+-- criar a linha à mão antes de lhe dar acesso, e a única pista era um erro de
+-- chave estrangeira — não vale a pena guardar essa armadilha para o próximo.
+create or replace function public.pm_criar_perfil()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.profiles (id, nome, email)
+  values (
+    new.id,
+    coalesce(
+      nullif(trim(new.raw_user_meta_data->>'name'), ''),
+      nullif(trim(new.raw_user_meta_data->>'full_name'), ''),
+      split_part(new.email, '@', 1)
+    ),
+    new.email
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists pm_auth_novo_utilizador on auth.users;
+create trigger pm_auth_novo_utilizador
+  after insert on auth.users
+  for each row execute function public.pm_criar_perfil();
+
 -- Uma linha por área a que a pessoa tem acesso.
 -- area: 'erp' | 'projetos'
 --

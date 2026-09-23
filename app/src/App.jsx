@@ -13,6 +13,7 @@ import Alerts, { contarAlertas } from "./components/Alerts.jsx";
 import TaskDrawer from "./components/TaskDrawer.jsx";
 import MultiSelect from "./components/MultiSelect.jsx";
 import { Banner } from "./components/Bits.jsx";
+import Conta from "./components/Conta.jsx";
 
 const VISTAS = [
   ["quadro", "Quadro"], ["projetos", "Projetos"], ["gantt", "Gantt"],
@@ -224,8 +225,7 @@ function Quadro({ session }) {
         {podeEscrever && (
           <button className="btn btn-primary" onClick={() => criarTarefa()}>Nova tarefa</button>
         )}
-        <button className="icon-btn" title="Sair" aria-label="Sair"
-          onClick={() => supabase.auth.signOut()}>⏻</button>
+        <Conta email={session.user.email} papel={acesso?.role} />
       </header>
 
       <Banner tipo="err" onFechar={() => setErro("")}>{erro}</Banner>
