@@ -237,7 +237,8 @@ function Quadro({ session }) {
         <Sidebar
           projects={projects} tasks={tasks} statuses={statuses} pessoas={pessoas}
           acesso={acesso} filtroProjetos={filtroProjetos} setFiltroProjetos={setFiltroProjetos}
-          aberta={menuLateral}
+          aberta={menuLateral} podeCriar={podeCriar} podeEscrever={podeEscrever}
+          guardar={guardar} sessaoUserId={session.user.id} recarregar={recarregar}
         />
         <div className="content">
           {vista === "quadro" && <Board ctx={ctx} criarTarefa={criarTarefa} />}

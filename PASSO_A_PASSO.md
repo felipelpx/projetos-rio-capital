@@ -90,17 +90,18 @@ São dois passos por pessoa: criar a conta, e dar-lhe a área de projetos.
 A pessoa muda a palavra-passe depois, sozinha, no menu ⚙ dentro da aplicação.
 
 **Dar o nome e o acesso**: abrir o **`05_dar_acesso.sql`**, que tem a lista da
-equipa no topo — email, nome e papel, uma linha por pessoa. Correr. No fim
-imprime quem ficou sem conta (é preciso criá-la no painel primeiro) e a lista de
+equipa lá dentro — email, nome e papel, uma linha por pessoa. Correr. Devolve
+duas tabelas: quem está na lista mas ainda não tem conta criada no painel, e
 quem tem o quê.
 
-Para mudar o papel de alguém mais tarde, muda-se na lista e corre-se outra vez.
+Para acrescentar alguém ou mudar um papel, mexe-se só na lista e corre-se outra
+vez.
 
 | `role` | na aplicação | o que pode |
 |---|---|---|
 | `admin` | **Super admin** | tudo: cria e altera tarefas, mexe em datas, **repõe a data prevista com justificação**, e dá ou retira acesso às pessoas |
-| `interact` | **Editor** | cria e altera tarefas, mexe nas datas e nas dependências, apaga, comenta, anexa. **Não** repõe a data prevista nem gere acessos |
-| `contrib` | **Editor parcial** | cria e altera tarefas, comenta e anexa. **Não** mexe em datas nem em dependências, e **não apaga** nada |
+| `interact` | **Editor** | cria e altera tarefas e projetos, mexe nas datas e nas dependências, apaga, comenta, anexa. **Não** repõe a data prevista nem gere acessos |
+| `contrib` | **Editor parcial** | cria tarefas e projetos, altera tarefas, comenta e anexa. **Não** mexe em datas nem em dependências, **não apaga** nada e **não altera projetos** que já existam |
 | `view` | **Visualizador** | vê o quadro e comenta. Não cria nem altera |
 
 Duas fronteiras, ambas de propósito:
@@ -110,6 +111,10 @@ desvio de todo o projeto. Alterá-la apaga a memória de qual era o plano. Por
 isso exige justificação, deixa registo permanente nos comentários, e só um super
 admin a pode mexer. O editor mexe à vontade na data de fim real — é isso que faz
 aparecer o desvio e empurra as tarefas dependentes.
+
+**Alterar um projeto** — o nome, a empresa, a cor, arquivá-lo — muda-o para
+toda a gente, por isso fica do lado do editor. Criar um novo não desfaz nada, e
+está aberto ao editor parcial.
 
 **As datas em geral** separam o editor do editor parcial. O editor parcial cria
 tarefas, muda títulos, estados, prioridades, notas, responsáveis e anexos, e

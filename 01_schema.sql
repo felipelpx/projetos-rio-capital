@@ -73,6 +73,24 @@ create table if not exists public.app_access (
   role      text not null check (role in ('view','contrib','interact','admin')),
   primary key (user_id, area)
 );
+-- `create table if not exists` não mexe numa tabela que já existe, e a lista de
+-- papéis cresceu. Sem isto, uma base montada com a versão anterior recusava
+-- 'contrib' com um erro de restrição.
+do $$
+declare c text;
+begin
+  for c in
+    select con.conname from pg_constraint con
+    join pg_class t on t.oid = con.conrelid
+    join pg_namespace n on n.oid = t.relnamespace
+    where n.nspname = 'public' and t.relname = 'app_access'
+      and con.contype = 'c' and pg_get_constraintdef(con.oid) ilike '%role%'
+  loop
+    execute format('alter table public.app_access drop constraint %I', c);
+  end loop;
+end $$;
+alter table public.app_access
+  add constraint app_access_role_check check (role in ('view','contrib','interact','admin'));
 
 -- Funções auxiliares usadas por todas as políticas.
 -- SECURITY DEFINER para não entrarem em recursão com o RLS de app_access.
@@ -376,9 +394,12 @@ create policy st_gerir on public.pm_statuses for all
 drop policy if exists proj_ler on public.pm_projects;
 create policy proj_ler on public.pm_projects for select
   using (tem_area('projetos') and (owner_id is null or owner_id = auth.uid()));
+-- Criar: editor parcial para cima. Criar um projeto não desfaz nada.
 drop policy if exists proj_criar on public.pm_projects;
 create policy proj_criar on public.pm_projects for insert
-  with check (pode_escrever('projetos') and (owner_id is null or owner_id = auth.uid()));
+  with check (pode_criar('projetos') and (owner_id is null or owner_id = auth.uid()));
+-- Alterar (nome, empresa, cor, arquivar): só escrita completa. Renomear um
+-- projeto muda-o para toda a gente, e é aí que se traça a linha.
 drop policy if exists proj_alterar on public.pm_projects;
 create policy proj_alterar on public.pm_projects for update
   using (pode_escrever('projetos') and (owner_id is null or owner_id = auth.uid()))

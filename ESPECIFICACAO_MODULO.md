@@ -54,7 +54,11 @@ Três invariantes que não se devem perder:
    Só a função `pm_repor_fim_previsto(task, justificacao)` a altera, e essa exige
    justificação e escreve um registo em `pm_comments`.
 2. **`owner_id` preenchido = projeto/tarefa particular.** Invisível para todos os
-   outros, incluindo quem criou o quadro.
+   outros, incluindo quem administra. Escolhe-se na criação do projeto e não se
+   troca depois: mudar um projeto de partilhado para particular (ou o contrário)
+   mudaria quem vê as tarefas lá dentro, e isso não deve acontecer num menu.
+   As políticas impedem também criar um projeto particular em nome de outra
+   pessoa.
 3. **Não existe lista de "membros" à parte.** A equipa é quem tem
    `app_access('projetos')`. Só essas pessoas podem ser responsáveis por tarefas.
    Quatro papéis: **Super admin** (tudo, incluindo repor a data prevista e gerir

@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { subscrever, versaoAtual, ler, supabase } from "./supabase-falso.js";
 import { today } from "../src/lib/dates.js";
 import { PRIORIDADES } from "../src/lib/format.js";
-import { resolveViolations } from "../src/lib/schedule.js";
+import { cascade, resolveViolations } from "../src/lib/schedule.js";
 import Sidebar from "../src/components/Sidebar.jsx";
 import Board from "../src/components/Board.jsx";
 import ProjectBoard from "../src/components/ProjectBoard.jsx";
@@ -19,7 +20,18 @@ const VISTAS = [["quadro","Quadro"],["projetos","Projetos"],["gantt","Gantt"],["
 /* Réplica do App, mas com as escritas a ficarem em memória: serve para ver
    as vistas a desenhar sem precisar de Supabase. */
 export default function Harness() {
-  const [tasks, setTasks] = useState(F.tasks);
+  /* Tudo vem do armazém falso, como viria do Supabase. */
+  const versao = useSyncExternalStore(subscrever, versaoAtual);
+  const projects = useMemo(() => ler("pm_projects"), [versao]);
+  const tasks = useMemo(() => {
+    const assignees = ler("pm_task_assignees");
+    const deps = ler("pm_task_deps");
+    return ler("pm_tasks").map((t) => ({
+      ...t,
+      assignees: assignees.filter((a) => a.task_id === t.id).map((a) => a.user_id),
+      deps: deps.filter((d) => d.task_id === t.id)
+    }));
+  }, [versao]);
   const [vista, setVista] = useState("quadro");
   const [filtroProjetos, setFiltroProjetos] = useState(null);
   const [filtros, setFiltros] = useState({ estados: null, prioridades: null, pessoas: null });
@@ -29,7 +41,7 @@ export default function Harness() {
   const hoje = useMemo(() => today(new Date("2026-09-22T12:00:00")), []);
 
   const base = useMemo(() => tasks.filter((t) => {
-    const p = F.projects.find((x) => x.id === t.project_id);
+    const p = projects.find((x) => x.id === t.project_id);
     if (filtroProjetos) return filtroProjetos.includes(t.project_id);
     return !p?.arquivado;
   }), [tasks, filtroProjetos]);
@@ -39,16 +51,32 @@ export default function Harness() {
     (!filtros.prioridades || filtros.prioridades.includes(t.prioridade || "media"))
   ), [base, filtros]);
 
+  const comentarios = useMemo(() => ler("pm_comments"), [versao]);
+  const anexos = useMemo(() => ler("pm_attachments"), [versao]);
+
+  const guardar = useCallback(async (fn) => { await fn(); return { ok: true }; }, []);
+
   const patchTarefa = useCallback(async (id, campos) => {
-    setTasks((ts) => ts.map((t) => (t.id === id ? { ...t, ...campos } : t)));
+    await supabase.from("pm_tasks").update(campos).eq("id", id);
+    const depois = ler("pm_tasks").map((t) => ({
+      ...t,
+      deps: ler("pm_task_deps").filter((d) => d.task_id === t.id)
+    }));
+    for (const m of cascade(id, depois)) {
+      const { id: mid, titulo, ...cs } = m;
+      await supabase.from("pm_tasks").update(cs).eq("id", mid);
+    }
     return { ok: true };
   }, []);
 
   const ajustar = useCallback(async (id) => {
-    setTasks((ts) => {
-      const m = resolveViolations(ts, id ?? null);
-      return ts.map((t) => ({ ...t, ...(m.find((x) => x.id === t.id) || {}) }));
-    });
+    const atuais = ler("pm_tasks").map((t) => ({
+      ...t, deps: ler("pm_task_deps").filter((d) => d.task_id === t.id)
+    }));
+    for (const m of resolveViolations(atuais, id ?? null)) {
+      const { id: mid, titulo, ...cs } = m;
+      await supabase.from("pm_tasks").update(cs).eq("id", mid);
+    }
     return { ok: true };
   }, []);
 
@@ -58,20 +86,20 @@ export default function Harness() {
     { id: "__sem__", nome: "Sem responsável", n: base.filter((t) => !t.assignees.length).length }];
 
   const ctx = {
-    base, listaFiltrada, tasks, statuses: F.statuses, projects: F.projects, pessoas: F.pessoas,
-    comments: F.comments, attachments: F.attachments, hoje, podeEscrever: podeEscreverCom(papel), podeCriar: podeCriarCom(papel),
+    base, listaFiltrada, tasks, statuses: F.statuses, projects, pessoas: F.pessoas,
+    comments: comentarios, attachments: anexos, hoje, podeEscrever: podeEscreverCom(papel), podeCriar: podeCriarCom(papel),
     podeComentar: podeComentarCom(papel), souAdmin: papel === "admin",
     filtros, setFiltros, abertoMulti, setAbertoMulti, filtroProjetos,
     itensEstado, itensPrioridade, itensPessoa,
-    contarComentarios: (id) => F.comments.filter((c) => c.task_id === id).length,
-    contarAnexos: (id) => F.attachments.filter((a) => a.task_id === id).length,
+    contarComentarios: (id) => comentarios.filter((c) => c.task_id === id).length,
+    contarAnexos: (id) => anexos.filter((a) => a.task_id === id).length,
     ordemEstado: (id) => F.statuses.findIndex((s) => s.id === id),
     bloqueada: (t) => t.deps.some((d) => {
       const p = tasks.find((x) => x.id === d.depende_de);
       return p && !F.statuses.find((s) => s.id === p.status_id)?.conta_concluido;
     }),
     onAbrir: setAberta, patchTarefa,
-    guardar: async () => ({ ok: true }), recarregar: () => {}, sessaoUserId: "u1"
+    guardar, recarregar: () => {}, sessaoUserId: "u1"
   };
 
   const nAlertas = contarAlertas(base, F.statuses, hoje);
@@ -105,12 +133,14 @@ export default function Harness() {
         <span>
           <b>Pré-visualização do módulo novo</b> — dados de exemplo, nada fica guardado.
           É o código React que vai para o Netlify, ligado ao Supabase do ERP.
-          Usa o <b>Ver como</b> à direita para experimentar os três papéis.
+          Usa o <b>Ver como</b> à direita para experimentar os quatro papéis.
         </span>
       </div>
       <div className="main">
-        <Sidebar projects={F.projects} tasks={tasks} statuses={F.statuses} pessoas={F.pessoas}
-          acesso={{ role: papel }} filtroProjetos={filtroProjetos} setFiltroProjetos={setFiltroProjetos} />
+        <Sidebar projects={projects} tasks={tasks} statuses={F.statuses} pessoas={F.pessoas}
+          acesso={{ role: papel }} filtroProjetos={filtroProjetos} setFiltroProjetos={setFiltroProjetos}
+          podeCriar={podeCriarCom(papel)} podeEscrever={podeEscreverCom(papel)}
+          sessaoUserId="u1" recarregar={() => {}} guardar={guardar} />
         <div className="content">
           {vista === "quadro" && <Board ctx={ctx} criarTarefa={() => {}} />}
           {vista === "projetos" && <ProjectBoard ctx={ctx} criarTarefa={() => {}} />}

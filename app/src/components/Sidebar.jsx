@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Avatar } from "./Bits.jsx";
+import ProjetoEditor from "./ProjetoEditor.jsx";
 import { NIVEIS, NIVEIS_EXPLICACAO } from "../lib/format.js";
 
 /** Projetos agrupados por empresa, por ordem alfabética; particulares no fim. */
@@ -24,11 +25,20 @@ function agrupar(projects) {
 }
 
 export default function Sidebar({
-  projects, tasks, statuses, pessoas, acesso, filtroProjetos, setFiltroProjetos, aberta
+  projects, tasks, statuses, pessoas, acesso, filtroProjetos, setFiltroProjetos, aberta,
+  podeCriar, podeEscrever, guardar, sessaoUserId, recarregar
 }) {
   const [equipaAberta, setEquipaAberta] = useState(false);
   const [colunasAbertas, setColunasAbertas] = useState(false);
   const [arquivoAberto, setArquivoAberto] = useState(false);
+  const [aEditar, setAEditar] = useState(null);   // id do projeto, ou "__novo__"
+
+  const empresas = [...new Set(projects.map((p) => p.empresa).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "pt", { sensitivity: "base" }));
+
+  /* Criar um projeto: editor parcial para cima. Alterar um que já existe:
+     só escrita completa — renomear muda-o para toda a gente. */
+  const posso = () => podeEscrever;
 
   const contagem = {};
   for (const t of tasks) contagem[t.project_id] = (contagem[t.project_id] || 0) + 1;
@@ -47,7 +57,13 @@ export default function Sidebar({
     setFiltroProjetos(atual.length === base.length ? null : atual);
   }
 
-  const linha = (p) => (
+  const linha = (p) => aEditar === p.id ? (
+    <ProjetoEditor
+      key={p.id} projeto={p} empresas={empresas} guardar={guardar}
+      podeEscrever={podeEscrever} sessaoUserId={sessaoUserId} recarregar={recarregar}
+      onFechar={() => setAEditar(null)}
+    />
+  ) : (
     <div className={"prow" + (p.arquivado ? " archived" : "")} key={p.id}>
       {p.arquivado ? (
         <span className="pcheck-gap" />
@@ -71,6 +87,10 @@ export default function Sidebar({
           {p.owner_id && <span className="lock" title="Só tu vês este projeto"> ●</span>}
         </span>
         <span className="ct">{contagem[p.id] || 0}</span>
+        {posso() && (
+          <span className="ed" role="button" title="Editar projeto" aria-label={"Editar " + p.nome}
+            onClick={(e) => { e.stopPropagation(); setAEditar(p.id); }}>✎</span>
+        )}
       </button>
     </div>
   );
@@ -81,7 +101,13 @@ export default function Sidebar({
   return (
     <aside className={"side" + (aberta ? " open" : "")} id="side">
       <section>
-        <div className="side-head"><span className="eyebrow">Projetos</span></div>
+        <div className="side-head">
+          <span className="eyebrow">Projetos</span>
+          {podeCriar && (
+            <button className="icon-btn" title="Novo projeto" aria-label="Novo projeto"
+              onClick={() => setAEditar(aEditar === "__novo__" ? null : "__novo__")}>+</button>
+          )}
+        </div>
         <div>
           <div className="prow">
             <input
@@ -97,6 +123,14 @@ export default function Sidebar({
               <span className="ct">{tasks.filter((t) => !projects.find((p) => p.id === t.project_id)?.arquivado).length}</span>
             </button>
           </div>
+
+          {aEditar === "__novo__" && (
+            <ProjetoEditor
+              empresas={empresas} guardar={guardar} podeEscrever={podeEscrever}
+              sessaoUserId={sessaoUserId} recarregar={recarregar}
+              onFechar={() => setAEditar(null)}
+            />
+          )}
 
           {grupos.map((g) => (
             <div key={g.chave || "__sem__"}>
