@@ -17,12 +17,12 @@ drop policy if exists anexos_ler on storage.objects;
 create policy anexos_ler on storage.objects for select
   using (bucket_id = 'pm-anexos' and public.tem_area('projetos'));
 
--- Editores e super admins carregam ficheiros. Visualizadores não.
+-- Carregar: editor parcial para cima. O visualizador não.
 drop policy if exists anexos_carregar on storage.objects;
 create policy anexos_carregar on storage.objects for insert
-  with check (bucket_id = 'pm-anexos' and public.pode_escrever('projetos'));
+  with check (bucket_id = 'pm-anexos' and public.pode_criar('projetos'));
 
--- Quem carrega também pode remover.
+-- Remover: só quem tem escrita completa (editor e super admin).
 drop policy if exists anexos_remover on storage.objects;
 create policy anexos_remover on storage.objects for delete
   using (bucket_id = 'pm-anexos' and public.pode_escrever('projetos'));

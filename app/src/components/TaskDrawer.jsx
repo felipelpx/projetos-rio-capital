@@ -25,7 +25,10 @@ function CampoLento({ valor, onGuardar, textarea, ...props }) {
 
 export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
   const {
-    tasks, statuses, projects, pessoas, comments, attachments, podeEscrever,
+    tasks, statuses, projects, pessoas, comments, attachments,
+    podeEscrever,   // datas, dependências, apagar — editor e super admin
+    podeCriar,      // criar e alterar tarefas — editor parcial para cima
+    podeComentar,   // toda a gente com acesso, incluindo o visualizador
     souAdmin, patchTarefa, guardar, recarregar, sessaoUserId, hoje
   } = ctx;
 
@@ -168,14 +171,14 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
         <div className="drawer-body">
           <div className="fgroup">
             <label htmlFor="d-titulo">Título</label>
-            <CampoLento id="d-titulo" valor={t.titulo} disabled={!podeEscrever}
+            <CampoLento id="d-titulo" valor={t.titulo} disabled={!podeCriar}
               onGuardar={(v) => patch({ titulo: v })} />
           </div>
 
           <div className="frow">
             <div className="fgroup">
               <label htmlFor="d-proj">Projeto</label>
-              <select className="field" id="d-proj" value={t.project_id || ""} disabled={!podeEscrever}
+              <select className="field" id="d-proj" value={t.project_id || ""} disabled={!podeCriar}
                 onChange={(e) => patch({ project_id: e.target.value || null })}>
                 <option value="">— sem projeto —</option>
                 {projects.map((p) => (
@@ -186,7 +189,7 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
             </div>
             <div className="fgroup">
               <label htmlFor="d-estado">Estado</label>
-              <select className="field" id="d-estado" value={t.status_id || ""} disabled={!podeEscrever}
+              <select className="field" id="d-estado" value={t.status_id || ""} disabled={!podeCriar}
                 onChange={(e) => {
                   const s = statuses.find((x) => x.id === e.target.value);
                   patch({ status_id: e.target.value, ...(s?.conta_concluido ? { progresso: 100 } : {}) });
@@ -199,7 +202,7 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
           <div className="frow">
             <div className="fgroup">
               <label htmlFor="d-prio">Prioridade</label>
-              <select className="field" id="d-prio" value={t.prioridade || "media"} disabled={!podeEscrever}
+              <select className="field" id="d-prio" value={t.prioridade || "media"} disabled={!podeCriar}
                 onChange={(e) => patch({ prioridade: e.target.value })}>
                 {PRIORIDADES.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
               </select>
@@ -208,7 +211,7 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
               <label htmlFor="d-prog">Progresso</label>
               <div className="rangewrap">
                 <input id="d-prog" type="range" min="0" max="100" step="5" value={t.progresso || 0}
-                  disabled={!podeEscrever}
+                  disabled={!podeCriar}
                   onChange={(e) => patch({ progresso: Number(e.target.value) })} />
                 <span className="val mono">{t.progresso || 0}%</span>
               </div>
@@ -220,6 +223,9 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
               <label htmlFor="d-inicio">Início</label>
               <input className="field" id="d-inicio" type="date" value={t.inicio || ""} disabled={!podeEscrever}
                 onChange={(e) => mudarDatas("inicio", e.target.value)} />
+              {podeCriar && !podeEscrever && (
+                <span className="co-note">O teu acesso não permite alterar datas.</span>
+              )}
             </div>
             <div className="fgroup">
               <label htmlFor="d-fim">Fim (real)</label>
@@ -277,7 +283,7 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
                 return (
                   <span className="chip" key={id}>
                     <Avatar pessoa={p} sm />{p.nome}
-                    {podeEscrever && (
+                    {podeCriar && (
                       <button aria-label={"Remover " + p.nome} onClick={() =>
                         guardar(() => supabase.from("pm_task_assignees").delete()
                           .eq("task_id", t.id).eq("user_id", id))}>✕</button>
@@ -285,7 +291,7 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
                   </span>
                 );
               })}
-              {podeEscrever && (
+              {podeCriar && (
                 <button className="chip-add" onClick={() => setPicker(!picker)}>+ Atribuir</button>
               )}
             </div>
@@ -420,7 +426,7 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
             ) : (
               <p className="att-empty">Sem anexos. Aqui o Excel e o Word funcionam.</p>
             )}
-            {podeEscrever && (
+            {podeCriar && (
               <div className="att-actions">
                 <button className="chip-add" onClick={() => ficheiro.current?.click()}>+ Carregar ficheiro</button>
                 <input ref={ficheiro} type="file" multiple hidden
@@ -432,7 +438,7 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
 
           <div className="fgroup">
             <label htmlFor="d-notas">Notas</label>
-            <CampoLento id="d-notas" textarea rows="3" valor={t.notas} disabled={!podeEscrever}
+            <CampoLento id="d-notas" textarea rows="3" valor={t.notas} disabled={!podeCriar}
               placeholder="Contexto, links, próximos passos…" onGuardar={(v) => patch({ notas: v })} />
           </div>
 
@@ -482,7 +488,7 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
             ) : (
               <p className="cm-empty">Ainda sem comentários.</p>
             )}
-            {podeEscrever && (
+            {podeComentar && (
               <div className="composer">
                 <textarea className="field" rows="2" placeholder="Escreve um comentário…"
                   value={comentario} onChange={(e) => setComentario(e.target.value)}
@@ -502,7 +508,11 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
               await guardar(() => supabase.from("pm_tasks").delete().eq("id", t.id));
               onFechar();
             }}>Apagar tarefa</button>
-          ) : <span className="hintline">Estás em modo de leitura.</span>}
+          ) : (
+            <span className="hintline">
+              {podeCriar ? "O teu acesso não permite apagar." : "Podes ver e comentar."}
+            </span>
+          )}
           <button className="btn btn-sm" onClick={onFechar}>Fechar</button>
         </div>
       </aside>

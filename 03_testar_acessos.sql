@@ -6,6 +6,7 @@
 -- consegue fazer, e apaga-se a si próprio no fim.
 --
 -- Cada bloco imprime "OK" ou "FALHA". Se aparecer uma FALHA, não avançar.
+-- São 13 verificações, sobre os quatro papéis.
 --
 -- Em Supabase corre-se tudo de uma vez (Run). O `set request.jwt.claim.sub`
 -- finge que somos cada um dos utilizadores.
@@ -26,10 +27,18 @@ insert into public.profiles (id, nome, email) values
   ('00000000-0000-4000-a000-000000000003','Teste Visual','teste-visual@exemplo.invalid')
 on conflict (id) do nothing;
 
+insert into auth.users (id, email) values
+  ('00000000-0000-4000-a000-000000000004','teste-parcial@exemplo.invalid')
+on conflict (id) do nothing;
+insert into public.profiles (id, nome, email) values
+  ('00000000-0000-4000-a000-000000000004','Teste Parcial','teste-parcial@exemplo.invalid')
+on conflict (id) do nothing;
+
 insert into public.app_access (user_id, area, role) values
   ('00000000-0000-4000-a000-000000000001','projetos','admin'),
   ('00000000-0000-4000-a000-000000000002','projetos','interact'),
-  ('00000000-0000-4000-a000-000000000003','projetos','view')
+  ('00000000-0000-4000-a000-000000000003','projetos','view'),
+  ('00000000-0000-4000-a000-000000000004','projetos','contrib')
 on conflict (user_id, area) do update set role = excluded.role;
 
 -- Resultados -----------------------------------------------------------------
@@ -59,6 +68,7 @@ declare
   v_super uuid := '00000000-0000-4000-a000-000000000001';
   v_edit  uuid := '00000000-0000-4000-a000-000000000002';
   v_view  uuid := '00000000-0000-4000-a000-000000000003';
+  v_parc  uuid := '00000000-0000-4000-a000-000000000004';
   v_task  uuid;
   v_ok    boolean;
   v_erro  text;
@@ -86,6 +96,47 @@ begin
     end if;
   exception when others then
     n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Visualizador NÃO altera tarefas', 'OK');
+  end;
+
+  begin
+    insert into public.pm_comments (task_id, autor_id, texto)
+    values (v_task, v_view, 'o visualizador comenta');
+    n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Visualizador comenta', 'OK');
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Visualizador comenta', 'FALHA — recusado');
+  end;
+
+  ------------------------------------------------------------- editor parcial
+  perform set_config('request.jwt.claim.sub', v_parc::text, true);
+
+  begin
+    insert into public.pm_tasks (titulo, status_id)
+    values ('__parcial__', (select id from public.pm_statuses order by posicao limit 1));
+    n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Editor parcial cria tarefas', 'OK');
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Editor parcial cria tarefas', 'FALHA — recusado');
+  end;
+
+  begin
+    update public.pm_tasks set fim = current_date + 99 where id = v_task;
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor parcial NÃO mexe em datas', 'FALHA — mexeu');
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor parcial NÃO mexe em datas', 'OK');
+  end;
+
+  begin
+    delete from public.pm_tasks where titulo = '__parcial__';
+    if found then
+      n := n + 1; insert into _res (ordem, o_que, resultado)
+      values (n, 'Editor parcial NÃO apaga', 'FALHA — apagou');
+    else
+      n := n + 1; insert into _res (ordem, o_que, resultado)
+      values (n, 'Editor parcial NÃO apaga', 'OK');
+    end if;
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Editor parcial NÃO apaga', 'OK');
   end;
 
   --------------------------------------------------------------------- editor
@@ -152,7 +203,7 @@ begin
 end $$;
 
 reset role;
-delete from public.pm_tasks where titulo in ('__teste_acessos__','__nao_devia__','__mexido__');
+delete from public.pm_tasks where titulo in ('__teste_acessos__','__nao_devia__','__mexido__','__parcial__');
 
 select o_que as "o que se testou", resultado from _res order by ordem;
 

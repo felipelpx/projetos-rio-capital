@@ -38,12 +38,20 @@ export const PALETA_ESTADO = ["#7C8B99", "#2F86C4", "#C68A1B", "#3D9668", "#B24A
 export const NIVEIS = {
   admin: "Super admin",
   interact: "Editor",
+  contrib: "Editor parcial",
   view: "Visualizador"
 };
 
 /** O que cada papel pode, em palavras — para a barra lateral. */
 export const NIVEIS_EXPLICACAO = {
   admin: "Faz tudo, incluindo repor a data prevista e gerir acessos.",
-  interact: "Cria e altera tarefas, comenta e anexa. Não repõe a data prevista.",
-  view: "Vê o quadro e não mexe em nada."
+  interact: "Cria e altera tarefas, mexe em datas e dependências, apaga.",
+  contrib: "Cria e altera tarefas e comenta. Não mexe em datas nem apaga.",
+  view: "Vê o quadro e comenta."
 };
+
+/* Quem pode o quê. A base de dados impõe o mesmo; isto é só para o ecrã não
+   mostrar botões que iam dar erro. */
+export const podeCriarCom = (r) => r === "contrib" || r === "interact" || r === "admin";
+export const podeEscreverCom = (r) => r === "interact" || r === "admin";
+export const podeComentarCom = (r) => !!r;

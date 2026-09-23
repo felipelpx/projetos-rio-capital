@@ -58,16 +58,19 @@ create trigger pm_auth_novo_utilizador
 -- area: 'erp' | 'projetos'
 --
 -- Os três papéis da área 'projetos':
---   view      Visualizador — vê tudo, não mexe em nada.
---   interact  Editor       — cria e altera tarefas, comenta, anexa, mexe nas
---                            datas. NÃO pode repor a data prevista (a que exige
---                            justificação) nem gerir acessos.
---   admin     Super admin  — tudo o que o editor faz, mais repor a data prevista
---                            com justificação e dar/retirar acesso a pessoas.
+--   view      Visualizador    — vê tudo e comenta. Não cria, não altera,
+--                                não apaga.
+--   contrib   Editor parcial  — o do visualizador, mais criar tarefas e
+--                                alterá-las. NÃO mexe em datas nem apaga nada.
+--   interact  Editor          — tudo o que o editor parcial faz, mais datas,
+--                                dependências e apagar. NÃO repõe a data
+--                                prevista nem gere acessos.
+--   admin     Super admin     — tudo, incluindo repor a data prevista com
+--                                justificação e dar/retirar acesso a pessoas.
 create table if not exists public.app_access (
   user_id   uuid not null references public.profiles(id) on delete cascade,
   area      text not null check (area in ('erp','projetos')),
-  role      text not null check (role in ('view','interact','admin')),
+  role      text not null check (role in ('view','contrib','interact','admin')),
   primary key (user_id, area)
 );
 
@@ -81,12 +84,29 @@ returns boolean language sql stable security definer set search_path = public as
   );
 $$;
 
+-- Escrita completa: datas, dependências e apagar. Editor e super admin.
 create or replace function public.pode_escrever(p_area text)
 returns boolean language sql stable security definer set search_path = public as $$
   select exists (
     select 1 from public.app_access
     where user_id = auth.uid() and area = p_area and role in ('interact','admin')
   );
+$$;
+
+-- Criar e alterar tarefas: editor parcial para cima.
+create or replace function public.pode_criar(p_area text)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.app_access
+    where user_id = auth.uid() and area = p_area
+      and role in ('contrib','interact','admin')
+  );
+$$;
+
+-- Comentar: qualquer pessoa com acesso à área, incluindo o visualizador.
+create or replace function public.pode_comentar(p_area text)
+returns boolean language sql stable security definer set search_path = public as $$
+  select public.tem_area(p_area);
 $$;
 
 create or replace function public.e_admin(p_area text)
@@ -169,6 +189,34 @@ create trigger pm_tasks_fim_previsto
   before update on public.pm_tasks
   for each row execute function public.pm_fixar_fim_previsto();
 -- Repor a linha de base faz-se pela função da secção 5 (deixa registo).
+
+-- O editor parcial não mexe em datas. Isto não se consegue fazer só com RLS,
+-- que decide por linha e não por coluna, por isso vai num gatilho.
+create or replace function public.pm_guardar_datas()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  -- Operações do servidor (sem sessão) e de quem tem escrita completa passam.
+  if auth.uid() is null or public.pode_escrever('projetos') then
+    return new;
+  end if;
+  if tg_op = 'INSERT' then
+    if new.inicio is not null or new.fim is not null or new.fim_previsto is not null then
+      raise exception 'O teu acesso não permite definir datas.';
+    end if;
+  else
+    if new.inicio       is distinct from old.inicio
+    or new.fim          is distinct from old.fim
+    or new.fim_previsto is distinct from old.fim_previsto then
+      raise exception 'O teu acesso não permite alterar datas.';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists pm_tasks_datas on public.pm_tasks;
+create trigger pm_tasks_datas
+  before insert or update on public.pm_tasks
+  for each row execute function public.pm_guardar_datas();
 
 create table if not exists public.pm_task_assignees (
   task_id   uuid not null references public.pm_tasks(id) on delete cascade,
@@ -352,10 +400,19 @@ $$;
 drop policy if exists tar_ler on public.pm_tasks;
 create policy tar_ler on public.pm_tasks for select
   using (pm_projeto_visivel(project_id, owner_id));
+-- Criar e alterar: editor parcial para cima (as datas ficam travadas no gatilho).
 drop policy if exists tar_escrever on public.pm_tasks;
-create policy tar_escrever on public.pm_tasks for all
-  using (pode_escrever('projetos') and pm_projeto_visivel(project_id, owner_id))
-  with check (pode_escrever('projetos') and pm_projeto_visivel(project_id, owner_id));
+drop policy if exists tar_criar on public.pm_tasks;
+create policy tar_criar on public.pm_tasks for insert
+  with check (pode_criar('projetos') and pm_projeto_visivel(project_id, owner_id));
+drop policy if exists tar_alterar on public.pm_tasks;
+create policy tar_alterar on public.pm_tasks for update
+  using (pode_criar('projetos') and pm_projeto_visivel(project_id, owner_id))
+  with check (pode_criar('projetos') and pm_projeto_visivel(project_id, owner_id));
+-- Apagar: só escrita completa.
+drop policy if exists tar_apagar on public.pm_tasks;
+create policy tar_apagar on public.pm_tasks for delete
+  using (pode_escrever('projetos') and pm_projeto_visivel(project_id, owner_id));
 
 -- Tabelas dependentes: seguem a visibilidade da tarefa.
 drop policy if exists atr_ler on public.pm_task_assignees;
@@ -363,8 +420,8 @@ create policy atr_ler on public.pm_task_assignees for select
   using (exists (select 1 from public.pm_tasks t where t.id = task_id));
 drop policy if exists atr_escrever on public.pm_task_assignees;
 create policy atr_escrever on public.pm_task_assignees for all
-  using (pode_escrever('projetos') and exists (select 1 from public.pm_tasks t where t.id = task_id))
-  with check (pode_escrever('projetos') and exists (select 1 from public.pm_tasks t where t.id = task_id));
+  using (pode_criar('projetos') and exists (select 1 from public.pm_tasks t where t.id = task_id))
+  with check (pode_criar('projetos') and exists (select 1 from public.pm_tasks t where t.id = task_id));
 
 drop policy if exists dep_ler on public.pm_task_deps;
 create policy dep_ler on public.pm_task_deps for select
@@ -379,7 +436,8 @@ create policy com_ler on public.pm_comments for select
   using (exists (select 1 from public.pm_tasks t where t.id = task_id));
 drop policy if exists com_criar on public.pm_comments;
 create policy com_criar on public.pm_comments for insert
-  with check (pode_escrever('projetos') and autor_id = auth.uid()
+  with check (pode_comentar('projetos') and autor_id = auth.uid()
+              and tipo = 'comentario'
               and exists (select 1 from public.pm_tasks t where t.id = task_id));
 -- Só o autor edita, e nunca um registo de replaneamento.
 drop policy if exists com_editar on public.pm_comments;
@@ -394,8 +452,12 @@ drop policy if exists anx_ler on public.pm_attachments;
 create policy anx_ler on public.pm_attachments for select
   using (exists (select 1 from public.pm_tasks t where t.id = task_id));
 drop policy if exists anx_escrever on public.pm_attachments;
-create policy anx_escrever on public.pm_attachments for all
-  using (pode_escrever('projetos')) with check (pode_escrever('projetos'));
+drop policy if exists anx_criar on public.pm_attachments;
+create policy anx_criar on public.pm_attachments for insert
+  with check (pode_criar('projetos'));
+drop policy if exists anx_apagar on public.pm_attachments;
+create policy anx_apagar on public.pm_attachments for delete
+  using (pode_escrever('projetos'));
 
 -- Subscrições: cada pessoa só mexe na sua; todas se leem (para o envio).
 drop policy if exists sub_ler on public.pm_subscriptions;

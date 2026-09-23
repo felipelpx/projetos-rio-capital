@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase, msgErro } from "../lib/supabase.js";
 import { cascade, resolveViolations } from "../lib/schedule.js";
+import { podeCriarCom, podeEscreverCom, podeComentarCom } from "../lib/format.js";
 
 /* Uma tarefa chega em várias linhas (tarefa + responsáveis + dependências).
    Junta-se tudo numa só forma, que é a que o resto da aplicação conhece. */
@@ -56,7 +57,6 @@ export function useBoard(session) {
           nome: perfis.get(a.user_id)?.nome || perfis.get(a.user_id)?.email || "Alguém",
           color: perfis.get(a.user_id)?.color || "#7C8B99"
         }))
-        .filter((p) => p.papel !== "view")
         .sort((a, b) => {
           const r = (x) => (x.papel === "admin" ? 0 : 1);
           return r(a) - r(b) || a.nome.localeCompare(b.nome, "pt");
@@ -95,8 +95,11 @@ export function useBoard(session) {
     return () => { supabase.removeChannel(canal); };
   }, [session, carregar]);
 
-  const podeEscrever = estado.acesso?.role === "interact" || estado.acesso?.role === "admin";
-  const souAdmin = estado.acesso?.role === "admin";
+  const papel = estado.acesso?.role || null;
+  const podeEscrever = podeEscreverCom(papel);   // datas, dependências, apagar
+  const podeCriar    = podeCriarCom(papel);      // criar e alterar tarefas
+  const podeComentar = podeComentarCom(papel);
+  const souAdmin     = papel === "admin";
 
   /* ---- escritas ---- */
 
@@ -170,7 +173,7 @@ export function useBoard(session) {
 
   return {
     ...estado, erro, aviso, setAviso, setErro,
-    podeEscrever, souAdmin, recarregar: carregar,
+    papel, podeEscrever, podeCriar, podeComentar, souAdmin, recarregar: carregar,
     guardar, patchTarefa, ajustarDependencias
   };
 }

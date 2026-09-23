@@ -63,7 +63,8 @@ function Quadro({ session }) {
   const dados = useBoard(session);
   const {
     projects, statuses, tasks, comments, attachments, pessoas,
-    carregado, erro, aviso, setAviso, setErro, podeEscrever, souAdmin,
+    carregado, erro, aviso, setAviso, setErro,
+    podeEscrever, podeCriar, podeComentar, souAdmin,
     patchTarefa, guardar, recarregar, ajustarDependencias, acesso
   } = dados;
 
@@ -162,7 +163,8 @@ function Quadro({ session }) {
 
   const ctx = {
     base, listaFiltrada, tasks, statuses, projects, pessoas, comments, attachments,
-    hoje, podeEscrever, souAdmin, filtros, setFiltros, abertoMulti, setAbertoMulti,
+    hoje, podeEscrever, podeCriar, podeComentar, souAdmin,
+    filtros, setFiltros, abertoMulti, setAbertoMulti,
     filtroProjetos, itensEstado, itensPrioridade, itensPessoa,
     contarComentarios, contarAnexos, ordemEstado, bloqueada,
     onAbrir: setAberta, patchTarefa, guardar, recarregar,
@@ -222,7 +224,7 @@ function Quadro({ session }) {
           valor={filtros.pessoas} onChange={(v) => setFiltros({ ...filtros, pessoas: v })}
           aberto={abertoMulti === "top-pes"} onAbrir={(a) => setAbertoMulti(a ? "top-pes" : null)}
         />
-        {podeEscrever && (
+        {podeCriar && (
           <button className="btn btn-primary" onClick={() => criarTarefa()}>Nova tarefa</button>
         )}
         <Conta email={session.user.email} papel={acesso?.role} />

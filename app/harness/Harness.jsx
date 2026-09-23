@@ -11,7 +11,7 @@ import Alerts, { contarAlertas } from "../src/components/Alerts.jsx";
 import TaskDrawer from "../src/components/TaskDrawer.jsx";
 import MultiSelect from "../src/components/MultiSelect.jsx";
 import * as F from "./dados.js";
-import { NIVEIS } from "../src/lib/format.js";
+import { NIVEIS, podeCriarCom, podeEscreverCom, podeComentarCom } from "../src/lib/format.js";
 import Conta from "../src/components/Conta.jsx";
 
 const VISTAS = [["quadro","Quadro"],["projetos","Projetos"],["gantt","Gantt"],["lista","Lista"],["alertas","Alertas"]];
@@ -59,7 +59,8 @@ export default function Harness() {
 
   const ctx = {
     base, listaFiltrada, tasks, statuses: F.statuses, projects: F.projects, pessoas: F.pessoas,
-    comments: F.comments, attachments: F.attachments, hoje, podeEscrever: papel !== "view", souAdmin: papel === "admin",
+    comments: F.comments, attachments: F.attachments, hoje, podeEscrever: podeEscreverCom(papel), podeCriar: podeCriarCom(papel),
+    podeComentar: podeComentarCom(papel), souAdmin: papel === "admin",
     filtros, setFiltros, abertoMulti, setAbertoMulti, filtroProjetos,
     itensEstado, itensPrioridade, itensPessoa,
     contarComentarios: (id) => F.comments.filter((c) => c.task_id === id).length,
@@ -91,13 +92,13 @@ export default function Harness() {
           Ver como
           <select className="field" value={papel} onChange={(e) => setPapel(e.target.value)}
             aria-label="Papel a simular">
-            {["admin", "interact", "view"].map((r) => <option key={r} value={r}>{NIVEIS[r]}</option>)}
+            {["admin", "interact", "contrib", "view"].map((r) => <option key={r} value={r}>{NIVEIS[r]}</option>)}
           </select>
         </label>
         <MultiSelect rotuloTudo="Todos os colaboradores" plural="colaboradores" itens={itensPessoa}
           valor={filtros.pessoas} onChange={(v) => setFiltros({ ...filtros, pessoas: v })}
           aberto={abertoMulti === "top"} onAbrir={(a) => setAbertoMulti(a ? "top" : null)} />
-        {papel !== "view" && <button className="btn btn-primary">Nova tarefa</button>}
+        {podeCriarCom(papel) && <button className="btn btn-primary">Nova tarefa</button>}
         <Conta email="juliana@riocapital.pt" papel={papel} />
       </header>
       <div className="banner info">

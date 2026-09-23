@@ -5,7 +5,7 @@ import { Vazio } from "./Bits.jsx";
 /** Quadro Kanban por estado. Aqui o estado é a coluna, por isso só se filtra prioridade. */
 export default function Board({ ctx, criarTarefa }) {
   const { base, statuses, projects, pessoas, hoje, contarComentarios, contarAnexos, bloqueada,
-          filtros, setFiltros, abertoMulti, setAbertoMulti, onAbrir, podeEscrever, itensPrioridade } = ctx;
+          filtros, setFiltros, abertoMulti, setAbertoMulti, onAbrir, podeCriar, itensPrioridade } = ctx;
 
   const lista = base.filter((t) => !filtros.prioridades || filtros.prioridades.includes(t.prioridade || "media"));
 
@@ -51,7 +51,7 @@ export default function Board({ ctx, criarTarefa }) {
                 ))}
               </div>
               <div className="col-foot">
-                {podeEscrever && (
+                {podeCriar && (
                   <button className="add-link" onClick={() => criarTarefa(s.id)}>+ Adicionar tarefa</button>
                 )}
               </div>

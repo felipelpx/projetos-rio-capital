@@ -1,66 +1,81 @@
 -- ============================================================================
--- Rio Capital — dar acesso a pessoas
---
--- Trocar os emails pelos verdadeiros e correr no SQL Editor.
+-- Rio Capital — pessoas e acessos
 --
 -- A conta cria-se antes, no painel: Authentication → Users → Add user →
 -- Create new user, com uma palavra-passe inicial e o *Auto Confirm User*
--- ligado. Este ficheiro só dá a área de projetos a quem já tem conta.
+-- ligado. Este ficheiro dá-lhe o nome e o papel.
 --
--- Pode correr as vezes que forem precisas: muda o papel de quem já lá está,
--- não duplica ninguém.
+-- Pode correr as vezes que forem precisas: atualiza quem já lá está e não
+-- duplica ninguém. Para mudar o papel de alguém, muda aqui e corre outra vez.
 -- ============================================================================
 
--- 1) Perfis em falta -----------------------------------------------------------
--- Quem entrou antes de o 01_schema.sql ser corrido não tem perfil, e sem perfil
--- não se consegue dar acesso. A partir de agora isto cria-se sozinho no primeiro
--- login; esta consulta só apanha os que ficaram para trás.
-insert into public.profiles (id, nome, email)
-select
-  u.id,
-  coalesce(
-    nullif(trim(u.raw_user_meta_data->>'name'), ''),
-    nullif(trim(u.raw_user_meta_data->>'full_name'), ''),
-    split_part(u.email, '@', 1)
-  ),
-  u.email
-from auth.users u
-on conflict (id) do nothing;
-
-
--- 2) Os acessos ---------------------------------------------------------------
--- Papéis:  'admin'    Super admin  — tudo, incluindo repor a data prevista
---                                    e dar acesso a outras pessoas
---          'interact' Editor       — cria e altera tarefas; não repõe a data
---                                    prevista nem gere acessos
---          'view'     Visualizador — vê e não mexe
+-- Os quatro papéis:
 --
-insert into public.app_access (user_id, area, role)
-select u.id, 'projetos', v.papel
+--   'admin'     Super admin     tudo, incluindo repor a data prevista com
+--                               justificação e dar acesso a pessoas
+--   'interact'  Editor          cria e altera tarefas, mexe em datas e
+--                               dependências, apaga
+--   'contrib'   Editor parcial  cria e altera tarefas e comenta;
+--                               NÃO mexe em datas nem apaga nada
+--   'view'      Visualizador    vê o quadro e comenta
+
+begin;
+
+create temporary table _equipa (email text, nome text, papel text) on commit drop;
+
+-- >>> A LISTA. Uma linha por pessoa. <<<
+insert into _equipa (email, nome, papel) values
+  ('juliana@riocapital.pt',       'Juliana Dornelles', 'admin'),
+  ('felipe@riocapital.pt',        'Felipe',            'admin'),
+  ('info@cmsi.pt',                'Julia',             'interact'),
+  ('davyd.ventura@riocapital.pt', 'Davyd Ventura',     'contrib'),
+  ('henrique@riocapital.pt',      'Henrique',          'view'),
+  ('marcelo@riocapital.pt',       'Marcelo',           'view');
+
+
+-- 1) Perfis --------------------------------------------------------------------
+-- Cria o que falta e acerta o nome de quem já lá está. (A partir do
+-- 01_schema.sql o perfil passa a criar-se sozinho no primeiro login, mas com o
+-- nome tirado do email; é aqui que fica o nome a sério.)
+insert into public.profiles (id, nome, email)
+select u.id, e.nome, u.email
 from auth.users u
-join (values
-  ('felipe@riocapital.pt',  'admin'),
-  ('juliana@riocapital.pt', 'admin')
-  -- Acrescentar o resto da equipa aqui, uma linha por pessoa:
-  -- ('outra.pessoa@riocapital.pt', 'interact'),
-  -- ('mais.alguem@riocapital.pt',  'view')
-) as v(email, papel) on lower(u.email) = lower(v.email)
+join _equipa e on lower(u.email) = lower(e.email)
+on conflict (id) do update set nome = excluded.nome;
+
+
+-- 2) Acessos -------------------------------------------------------------------
+insert into public.app_access (user_id, area, role)
+select u.id, 'projetos', e.papel
+from auth.users u
+join _equipa e on lower(u.email) = lower(e.email)
 on conflict (user_id, area) do update set role = excluded.role;
 
 
--- 3) Conferir ------------------------------------------------------------------
+-- 3) Quem ficou de fora ---------------------------------------------------------
+-- Estes emails estão na lista mas não têm conta no Supabase. Criar a conta
+-- primeiro (Authentication → Users → Add user) e correr isto outra vez.
+select e.email as "sem conta — criar no painel"
+from _equipa e
+where not exists (select 1 from auth.users u where lower(u.email) = lower(e.email));
+
+
+-- 4) Conferir -------------------------------------------------------------------
 select
   p.email,
   p.nome,
   case a.role
     when 'admin'    then 'Super admin'
     when 'interact' then 'Editor'
+    when 'contrib'  then 'Editor parcial'
     when 'view'     then 'Visualizador'
     else coalesce(a.role, '— sem acesso —')
   end as papel
 from public.profiles p
 left join public.app_access a on a.user_id = p.id and a.area = 'projetos'
-order by a.role nulls last, p.email;
+order by
+  case a.role when 'admin' then 1 when 'interact' then 2
+              when 'contrib' then 3 when 'view' then 4 else 5 end,
+  p.nome;
 
--- Se alguém aparecer com "— sem acesso —", ou o email está escrito de outra
--- forma na lista acima, ou essa pessoa ainda não entrou uma primeira vez.
+commit;

@@ -79,7 +79,14 @@ React e de Supabase de propósito, e tem testes em `test/schedule.test.mjs`.
    assinalado a vermelho até alguém carregar em "Ajustar N dependências".
    Não se corrige sozinho: mexer nas datas do plano sem pedir é pior.
 4. **A equipa é quem tem `app_access('projetos')`.** Não há lista de membros à
-   parte, e só essas pessoas podem ser responsáveis por tarefas.
+   parte, e só essas pessoas podem ser responsáveis por tarefas. Quatro papéis:
+   `admin` (Super admin), `interact` (Editor), `contrib` (Editor parcial) e
+   `view` (Visualizador).
+5. **As permissões vivem na base de dados.** `pode_criar`, `pode_escrever`,
+   `pode_comentar` e `e_admin` decidem nas políticas RLS; o gatilho
+   `pm_guardar_datas` trava alterações de datas a quem não tem escrita completa.
+   Os `podeCriar` / `podeEscrever` / `podeComentar` do contexto React só
+   escondem botões — nunca são a única defesa.
 
 ## O que falta
 

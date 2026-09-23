@@ -67,9 +67,9 @@ select t.titulo, t.inicio, public.pm_inicio_mais_cedo(t.id) as podia_arrancar
 
 ### 2.1 Conferir os papéis
 
-Terceira query: colar o **`03_testar_acessos.sql`** e correr. Cria três
+Terceira query: colar o **`03_testar_acessos.sql`** e correr. Cria quatro
 utilizadores de teste, experimenta o que cada um consegue fazer e apaga-se a si
-próprio no fim. Devem aparecer **nove linhas, todas OK**.
+próprio no fim. Devem aparecer **treze linhas, todas OK**.
 
 Se alguma disser FALHA, quase de certeza o `01_schema.sql` não chegou ao fim
 (um erro a meio deixa a base a meio caminho). Corrige-se correndo o 01 outra
@@ -89,24 +89,38 @@ São dois passos por pessoa: criar a conta, e dar-lhe a área de projetos.
 
 A pessoa muda a palavra-passe depois, sozinha, no menu ⚙ dentro da aplicação.
 
-**Dar o acesso**: abrir o **`05_dar_acesso.sql`**, pôr os emails com o papel de
-cada um e correr. No fim imprime a lista de quem tem o quê.
+**Dar o nome e o acesso**: abrir o **`05_dar_acesso.sql`**, que tem a lista da
+equipa no topo — email, nome e papel, uma linha por pessoa. Correr. No fim
+imprime quem ficou sem conta (é preciso criá-la no painel primeiro) e a lista de
+quem tem o quê.
+
+Para mudar o papel de alguém mais tarde, muda-se na lista e corre-se outra vez.
 
 | `role` | na aplicação | o que pode |
 |---|---|---|
-| `admin` | **Super admin** | tudo: cria e altera tarefas, **repõe a data prevista com justificação**, e dá ou retira acesso às pessoas |
-| `interact` | **Editor** | cria e altera tarefas, mexe nas datas de início e de fim real, comenta, anexa. **Não** repõe a data prevista nem gere acessos |
-| `view` | **Visualizador** | vê tudo, não mexe em nada |
+| `admin` | **Super admin** | tudo: cria e altera tarefas, mexe em datas, **repõe a data prevista com justificação**, e dá ou retira acesso às pessoas |
+| `interact` | **Editor** | cria e altera tarefas, mexe nas datas e nas dependências, apaga, comenta, anexa. **Não** repõe a data prevista nem gere acessos |
+| `contrib` | **Editor parcial** | cria e altera tarefas, comenta e anexa. **Não** mexe em datas nem em dependências, e **não apaga** nada |
+| `view` | **Visualizador** | vê o quadro e comenta. Não cria nem altera |
 
-A diferença entre editor e super admin é uma só, e é de propósito: a **data
-prevista** (a linha de base) é a referência contra a qual se mede o desvio de
-todo o projeto. Alterá-la apaga a memória de qual era o plano. Por isso exige
-justificação, deixa registo permanente nos comentários, e só um super admin a
-pode mexer. O editor mexe à vontade na data de fim real — é isso que faz
+Duas fronteiras, ambas de propósito:
+
+**A data prevista** (a linha de base) é a referência contra a qual se mede o
+desvio de todo o projeto. Alterá-la apaga a memória de qual era o plano. Por
+isso exige justificação, deixa registo permanente nos comentários, e só um super
+admin a pode mexer. O editor mexe à vontade na data de fim real — é isso que faz
 aparecer o desvio e empurra as tarefas dependentes.
 
-Isto está imposto na base de dados, não só no ecrã: um editor que chame a função
-diretamente leva com *"Só um super admin pode repor a data prevista."*
+**As datas em geral** separam o editor do editor parcial. O editor parcial cria
+tarefas, muda títulos, estados, prioridades, notas, responsáveis e anexos, e
+comenta. Não toca em datas nem em dependências (que mexem em datas por
+arrasto), e não apaga nada. Serve para quem contribui com trabalho sem mandar no
+calendário.
+
+Tudo isto está imposto na base de dados, não só no ecrã: um editor parcial que
+chame a API diretamente leva com *"O teu acesso não permite alterar datas."*, e
+um editor que tente repor a data prevista leva com *"Só um super admin pode
+repor a data prevista."* O `03_testar_acessos.sql` verifica as treze regras.
 
 Os ids das pessoas estão em **Authentication → Users**. Quem não tiver linha
 nenhuma entra e vê um aviso a dizer que não tem acesso.

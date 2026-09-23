@@ -5,7 +5,7 @@ import { Vazio } from "./Bits.jsx";
 /** Quadro com uma coluna por projeto. */
 export default function ProjectBoard({ ctx, criarTarefa }) {
   const { base, listaFiltrada, statuses, projects, pessoas, hoje,
-          contarComentarios, contarAnexos, bloqueada, onAbrir, podeEscrever,
+          contarComentarios, contarAnexos, bloqueada, onAbrir, podeCriar,
           filtroProjetos, ordemEstado } = ctx;
 
   const colunas = (filtroProjetos
@@ -46,7 +46,7 @@ export default function ProjectBoard({ ctx, criarTarefa }) {
                 ))}
               </div>
               <div className="col-foot">
-                {podeEscrever && (
+                {podeCriar && (
                   <button className="add-link" onClick={() => criarTarefa(null, p.id)}>+ Adicionar tarefa</button>
                 )}
               </div>
