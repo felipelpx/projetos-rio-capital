@@ -23,6 +23,7 @@ export default function Harness() {
   /* Tudo vem do armazém falso, como viria do Supabase. */
   const versao = useSyncExternalStore(subscrever, versaoAtual);
   const projects = useMemo(() => ler("pm_projects"), [versao]);
+  const empresas = useMemo(() => ler("pm_empresas"), [versao]);
   const tasks = useMemo(() => {
     const assignees = ler("pm_task_assignees");
     const deps = ler("pm_task_deps");
@@ -54,7 +55,10 @@ export default function Harness() {
   const comentarios = useMemo(() => ler("pm_comments"), [versao]);
   const anexos = useMemo(() => ler("pm_attachments"), [versao]);
 
-  const guardar = useCallback(async (fn) => { await fn(); return { ok: true }; }, []);
+  const guardar = useCallback(async (fn) => {
+    const r = await fn();
+    return { ok: true, data: r?.data };
+  }, []);
 
   const patchTarefa = useCallback(async (id, campos) => {
     await supabase.from("pm_tasks").update(campos).eq("id", id);
@@ -137,7 +141,7 @@ export default function Harness() {
         </span>
       </div>
       <div className="main">
-        <Sidebar projects={projects} tasks={tasks} statuses={F.statuses} pessoas={F.pessoas}
+        <Sidebar projects={projects} empresas={empresas} tasks={tasks} statuses={F.statuses} pessoas={F.pessoas}
           acesso={{ role: papel }} filtroProjetos={filtroProjetos} setFiltroProjetos={setFiltroProjetos}
           podeCriar={podeCriarCom(papel)} podeEscrever={podeEscreverCom(papel)}
           sessaoUserId="u1" recarregar={() => {}} guardar={guardar} />

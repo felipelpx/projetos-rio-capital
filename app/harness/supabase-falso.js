@@ -8,6 +8,7 @@ import * as F from "./dados.js";
 
 const estado = {
   pm_projects: F.projects.map((p) => ({ ...p })),
+  pm_empresas: F.empresas.map((e) => ({ ...e })),
   pm_tasks: F.tasks.map((t) => ({ ...t })),
   pm_statuses: F.statuses.map((s) => ({ ...s })),
   pm_comments: F.comments.map((c) => ({ ...c })),
@@ -19,7 +20,20 @@ const estado = {
 
 const ouvintes = new Set();
 let versao = 0;
-const avisar = () => { versao++; ouvintes.forEach((f) => f()); };
+
+/* Os mesmos dois gatilhos que existem no Postgres: o nome da empresa dentro do
+   projeto é um espelho, nunca se escreve à mão. Sem isto a pré-visualização
+   mentia — renomear uma empresa deixava o nome antigo nos cartões. */
+function espelharEmpresas() {
+  const nomes = new Map(estado.pm_empresas.map((e) => [e.id, e.nome]));
+  estado.pm_projects = estado.pm_projects.map((p) =>
+    p.empresa === (nomes.get(p.empresa_id) ?? null)
+      ? p
+      : { ...p, empresa: nomes.get(p.empresa_id) ?? null }
+  );
+}
+
+const avisar = () => { espelharEmpresas(); versao++; ouvintes.forEach((f) => f()); };
 export function subscrever(f) { ouvintes.add(f); return () => ouvintes.delete(f); }
 /* Um contador em vez das próprias linhas: o React compara por identidade, e
    uma tabela que não mudou devolvia a mesma referência e não redesenhava. */

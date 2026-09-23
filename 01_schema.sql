@@ -153,18 +153,104 @@ create table if not exists public.pm_statuses (
 -- 3. Projetos
 -- ----------------------------------------------------------------------------
 -- owner_id preenchido = projeto particular: só o dono o vê.
--- company_id: trocar o tipo/refer~encia pela tabela de sociedades do ERP
--- (ver secção 7). Fica text enquanto isso não estiver decidido.
+-- A empresa está em pm_empresas (secção 3b); aqui fica o empresa_id e uma
+-- cópia do nome. Por decidir: ligar pm_empresas à tabela de sociedades do ERP.
 create table if not exists public.pm_projects (
   id          uuid primary key default gen_random_uuid(),
   nome        text not null,
-  empresa     text,                       -- → substituir por company_id uuid references entidades(id)
+  empresa     text,                       -- espelho de pm_empresas.nome (ver 3b); não escrever à mão
   color       text not null default '#3A72B8',
   arquivado   boolean not null default false,
   owner_id    uuid references public.profiles(id) on delete cascade,
   criado_em   timestamptz not null default now()
 );
 create index if not exists pm_projects_owner_idx on public.pm_projects(owner_id);
+
+
+-- ----------------------------------------------------------------------------
+-- 3b. Empresas
+-- ----------------------------------------------------------------------------
+-- A empresa era texto solto dentro do projeto. Passa a ser uma linha própria,
+-- para poder ser criada, renomeada e arquivada (empresa que fecha não deve
+-- sumir: os projetos antigos dela continuam a existir e a fazer sentido).
+--
+-- A coluna pm_projects.empresa continua lá, e continua a ser o nome, mas
+-- deixa de ser escrita à mão: é um espelho, mantido pelos dois gatilhos
+-- abaixo. Assim renomear uma empresa acerta todos os projetos dela de uma vez,
+-- e tudo o que já lia .empresa continua a ler.
+create table if not exists public.pm_empresas (
+  id         uuid primary key default gen_random_uuid(),
+  nome       text not null,
+  arquivada  boolean not null default false,
+  criado_em  timestamptz not null default now()
+);
+-- Dois nomes iguais com maiúsculas diferentes são a mesma empresa.
+create unique index if not exists pm_empresas_nome_idx
+  on public.pm_empresas (lower(nome));
+
+alter table public.pm_projects
+  add column if not exists empresa_id uuid references public.pm_empresas(id) on delete set null;
+create index if not exists pm_projects_empresa_idx on public.pm_projects(empresa_id);
+
+-- Passa o texto que já lá está para a tabela nova, uma vez só.
+insert into public.pm_empresas (nome)
+select distinct trim(p.empresa)
+from public.pm_projects p
+where nullif(trim(p.empresa), '') is not null
+  and not exists (
+    select 1 from public.pm_empresas e where lower(e.nome) = lower(trim(p.empresa))
+  );
+
+update public.pm_projects p
+   set empresa_id = e.id
+  from public.pm_empresas e
+ where p.empresa_id is null
+   and lower(e.nome) = lower(trim(p.empresa));
+
+-- O espelho: quem manda é o empresa_id, o texto vem atrás e nunca se escreve
+-- à mão. Se ainda assim chegar texto solto sem empresa_id (a importação do
+-- quadro antigo, ou um cliente desatualizado), a empresa é procurada pelo nome
+-- e criada se não existir — em vez de se perder.
+create or replace function public.pm_espelhar_empresa()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.empresa_id is null
+     and nullif(btrim(coalesce(new.empresa, '')), '') is not null
+     and (tg_op = 'INSERT' or new.empresa is distinct from old.empresa)
+  then
+    select id into new.empresa_id
+      from public.pm_empresas where lower(nome) = lower(btrim(new.empresa));
+    if new.empresa_id is null then
+      insert into public.pm_empresas (nome) values (btrim(new.empresa))
+        returning id into new.empresa_id;
+    end if;
+  end if;
+  new.empresa := (select nome from public.pm_empresas where id = new.empresa_id);
+  return new;
+end $$;
+drop trigger if exists pm_projects_empresa on public.pm_projects;
+create trigger pm_projects_empresa
+  before insert or update on public.pm_projects
+  for each row execute function public.pm_espelhar_empresa();
+
+-- Renomear a empresa acerta os projetos dela.
+create or replace function public.pm_renomear_empresa()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.nome is distinct from old.nome then
+    update public.pm_projects set empresa = new.nome where empresa_id = new.id;
+  end if;
+  return new;
+end $$;
+drop trigger if exists pm_empresas_renomear on public.pm_empresas;
+create trigger pm_empresas_renomear
+  after update on public.pm_empresas
+  for each row execute function public.pm_renomear_empresa();
+
+-- A empresa do próprio grupo, para já sem projetos associados.
+insert into public.pm_empresas (nome)
+select 'Rio Capital'
+where not exists (select 1 from public.pm_empresas where lower(nome) = 'rio capital');
 
 
 -- ----------------------------------------------------------------------------
@@ -347,6 +433,7 @@ alter table public.profiles          enable row level security;
 alter table public.app_access        enable row level security;
 alter table public.pm_statuses       enable row level security;
 alter table public.pm_projects       enable row level security;
+alter table public.pm_empresas       enable row level security;
 alter table public.pm_tasks          enable row level security;
 alter table public.pm_task_assignees enable row level security;
 alter table public.pm_task_deps      enable row level security;
@@ -407,6 +494,18 @@ create policy proj_alterar on public.pm_projects for update
 drop policy if exists proj_apagar on public.pm_projects;
 create policy proj_apagar on public.pm_projects for delete
   using (pode_escrever('projetos') and (owner_id is null or owner_id = auth.uid()));
+
+-- Empresas: mesma linha que os projetos. Criar uma empresa não desfaz nada,
+-- por isso o editor parcial cria. Renomear ou arquivar muda o que toda a
+-- gente vê, por isso é só escrita completa. Não se apagam: uma empresa que
+-- fechou arquiva-se, para os projetos antigos dela continuarem a fazer sentido.
+drop policy if exists emp_ler on public.pm_empresas;
+create policy emp_ler on public.pm_empresas for select using (tem_area('projetos'));
+drop policy if exists emp_criar on public.pm_empresas;
+create policy emp_criar on public.pm_empresas for insert with check (pode_criar('projetos'));
+drop policy if exists emp_alterar on public.pm_empresas;
+create policy emp_alterar on public.pm_empresas for update
+  using (pode_escrever('projetos')) with check (pode_escrever('projetos'));
 
 -- Tarefas: a tarefa é visível se o projeto dela for visível.
 create or replace function public.pm_projeto_visivel(p_project uuid, p_owner uuid)

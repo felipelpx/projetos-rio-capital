@@ -9,10 +9,17 @@ export const statuses = [
   { id: "review", label: "Em revisão", color: "#C68A1B", posicao: 3000 },
   { id: "done", label: "Concluído", color: "#3D9668", posicao: 4000, conta_concluido: true }
 ];
+export const empresas = [
+  { id: "e1", nome: "Alternative Shadow", arquivada: false },
+  { id: "e2", nome: "Without Delays", arquivada: false },
+  { id: "e3", nome: "Crunchy Prophecy", arquivada: false },
+  { id: "e4", nome: "Rio Capital", arquivada: false },
+  { id: "e5", nome: "Sociedade que fechou", arquivada: true }
+];
 export const projects = [
-  { id: "p1", nome: "Arroios, Travessa das Amoreiras", empresa: "Alternative Shadow", color: "#C07A16", criado_em: "2026-09-21" },
-  { id: "p2", nome: "Avenida Braamcamp", empresa: "Without Delays", color: "#1F8A6B", criado_em: "2026-09-21" },
-  { id: "p3", nome: "Galpão antigo", empresa: "Crunchy Prophecy", color: "#6C5AB5", arquivado: true, criado_em: "2026-09-20" }
+  { id: "p1", nome: "Arroios, Travessa das Amoreiras", empresa_id: "e1", empresa: "Alternative Shadow", color: "#C07A16", criado_em: "2026-09-21" },
+  { id: "p2", nome: "Avenida Braamcamp", empresa_id: "e2", empresa: "Without Delays", color: "#1F8A6B", criado_em: "2026-09-21" },
+  { id: "p3", nome: "Galpão antigo", empresa_id: "e3", empresa: "Crunchy Prophecy", color: "#6C5AB5", arquivado: true, criado_em: "2026-09-20" }
 ];
 export const pessoas = [
   { id: "u1", nome: "Juliana Dornelles", color: "#3A72B8", papel: "admin" },

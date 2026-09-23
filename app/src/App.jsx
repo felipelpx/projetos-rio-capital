@@ -62,7 +62,7 @@ export default function App() {
 function Quadro({ session }) {
   const dados = useBoard(session);
   const {
-    projects, statuses, tasks, comments, attachments, pessoas,
+    projects, empresas, statuses, tasks, comments, attachments, pessoas,
     carregado, erro, aviso, setAviso, setErro,
     podeEscrever, podeCriar, podeComentar, souAdmin,
     patchTarefa, guardar, recarregar, ajustarDependencias, acesso
@@ -235,7 +235,7 @@ function Quadro({ session }) {
 
       <div className="main">
         <Sidebar
-          projects={projects} tasks={tasks} statuses={statuses} pessoas={pessoas}
+          projects={projects} empresas={empresas} tasks={tasks} statuses={statuses} pessoas={pessoas}
           acesso={acesso} filtroProjetos={filtroProjetos} setFiltroProjetos={setFiltroProjetos}
           aberta={menuLateral} podeCriar={podeCriar} podeEscrever={podeEscrever}
           guardar={guardar} sessaoUserId={session.user.id} recarregar={recarregar}

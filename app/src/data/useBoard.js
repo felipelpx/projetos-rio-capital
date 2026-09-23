@@ -14,14 +14,14 @@ function montarTarefas(tasks, assignees, deps) {
 }
 
 const TABELAS = [
-  "pm_projects", "pm_statuses", "pm_tasks", "pm_task_assignees",
+  "pm_projects", "pm_empresas", "pm_statuses", "pm_tasks", "pm_task_assignees",
   "pm_task_deps", "pm_comments", "pm_attachments", "pm_subscriptions"
 ];
 
 export function useBoard(session) {
   const [estado, setEstado] = useState({
     carregado: false,
-    projects: [], statuses: [], tasks: [], comments: [],
+    projects: [], empresas: [], statuses: [], tasks: [], comments: [],
     attachments: [], subscriptions: [], pessoas: [], acesso: null
   });
   const [erro, setErro] = useState("");
@@ -33,8 +33,9 @@ export function useBoard(session) {
     if (porCarregar.current) return;
     porCarregar.current = true;
     try {
-      const [proj, st, tk, asg, dps, cm, at, sub, acc, prof] = await Promise.all([
+      const [proj, emp, st, tk, asg, dps, cm, at, sub, acc, prof] = await Promise.all([
         supabase.from("pm_projects").select("*").order("criado_em"),
+        supabase.from("pm_empresas").select("*").order("nome"),
         supabase.from("pm_statuses").select("*").order("posicao"),
         supabase.from("pm_tasks").select("*"),
         supabase.from("pm_task_assignees").select("*"),
@@ -45,7 +46,7 @@ export function useBoard(session) {
         supabase.from("app_access").select("*").eq("area", "projetos"),
         supabase.from("profiles").select("*")
       ]);
-      const falhou = [proj, st, tk, asg, dps, cm, at, sub, acc, prof].find((r) => r.error);
+      const falhou = [proj, emp, st, tk, asg, dps, cm, at, sub, acc, prof].find((r) => r.error);
       if (falhou) throw falhou.error;
 
       /* A equipa é quem tem acesso à área — não há lista à parte. */
@@ -65,6 +66,7 @@ export function useBoard(session) {
       setEstado({
         carregado: true,
         projects: proj.data || [],
+        empresas: emp.data || [],
         statuses: st.data || [],
         tasks: montarTarefas(tk.data || [], asg.data || [], dps.data || []),
         comments: cm.data || [],
@@ -108,7 +110,7 @@ export function useBoard(session) {
       const r = await fn();
       if (r?.error) throw r.error;
       await carregar();
-      return { ok: true };
+      return { ok: true, data: r?.data };
     } catch (e) {
       const m = msgErro(e);
       setErro(m);

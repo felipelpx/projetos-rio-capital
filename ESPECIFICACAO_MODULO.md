@@ -39,7 +39,8 @@ Está todo em `01_schema.sql`, com as políticas. Em resumo:
 | Tabela | Para quê |
 |---|---|
 | `app_access` | que áreas (`erp` / `projetos`) e que papel cada pessoa tem: `admin` = Super admin, `interact` = Editor, `contrib` = Editor parcial, `view` = Visualizador |
-| `pm_projects` | projeto; `empresa` (→ passar a apontar para as sociedades do ERP), `arquivado`, `owner_id` |
+| `pm_empresas` | empresa; `nome` (único, sem distinguir maiúsculas), `arquivada`. Não se apaga |
+| `pm_projects` | projeto; `empresa_id` → `pm_empresas` (→ por decidir: ligar `pm_empresas` às sociedades do ERP), `empresa` (espelho do nome), `arquivado`, `owner_id` |
 | `pm_statuses` | as colunas do quadro, configuráveis pelo utilizador |
 | `pm_tasks` | tarefa; `fim` (real) e `fim_previsto` (linha de base imutável) |
 | `pm_task_assignees` | responsáveis → utilizadores |
@@ -48,7 +49,7 @@ Está todo em `01_schema.sql`, com as políticas. Em resumo:
 | `pm_attachments` | ficheiros (Storage) e links |
 | `pm_subscriptions` | quem quer o resumo diário e com que âmbito |
 
-Três invariantes que não se devem perder:
+Cinco invariantes que não se devem perder:
 
 1. **`fim_previsto` grava-se uma vez e nunca mais muda.** Há um trigger a garantir.
    Só a função `pm_repor_fim_previsto(task, justificacao)` a altera, e essa exige
@@ -69,6 +70,11 @@ Três invariantes que não se devem perder:
    `pm_guardar_datas` recusa alterações de datas a quem não tem escrita
    completa. O ecrã limita-se a não mostrar botões que iam falhar.
 4. **Adiar o fim de uma tarefa empurra as dependentes.** Ver a secção 3.6.
+5. **`pm_projects.empresa` é um espelho, não um campo.** Quem manda é o
+   `empresa_id`; o texto é mantido por dois gatilhos (`pm_projects_empresa`
+   ao escrever o projeto, `pm_empresas_renomear` ao renomear a empresa). Existe
+   para que tudo o que já lia `.empresa` continue a ler, e para que renomear uma
+   empresa acerte os projetos dela de uma vez. Nunca se escreve à mão.
 
 ---
 
@@ -218,6 +224,9 @@ por baixo e o desvio em dias), **depende de**, anexos, notas e comentários.
 
 Quatro secções, as três últimas dobráveis com a contagem no cabeçalho:
 
+- **Empresas** — secção dobrável: criar (**+**), renomear e arquivar (**✎**). O
+  número à frente é quantos projetos tem. As arquivadas ficam esbatidas e saem
+  das escolhas ao criar um projeto novo.
 - **Projetos** — agrupados por empresa (alfabética), depois **Projetos particulares**,
   depois **Arquivados** (fechado por omissão).
 - **Equipa** — quem tem acesso, com o nível e o número de tarefas a seu cargo. Não há como

@@ -23,8 +23,26 @@ insert into public.pm_statuses (id,label,color,posicao,conta_concluido,conta_por
   ('done','Concluído','#3D9668',4000,true,false)
 on conflict (id) do nothing;
 
+-- Empresas -------------------------------------------------------------------
+-- Criadas antes dos projetos, para o projeto entrar já ligado à empresa.
+insert into public.pm_empresas (nome)
+select v.nome from (values
+  ('Ocean Sesimbra'),
+  ('Without Delays'),
+  ('Alternative Shadow'),
+  ('Classic Revelation'),
+  ('Crunchy Prophecy'),
+  ('Chromatic Parcel'),
+  ('Modernity')
+) as v(nome)
+where not exists (
+  select 1 from public.pm_empresas e where lower(e.nome) = lower(v.nome)
+);
+
 -- Projetos -------------------------------------------------------------------
-insert into public.pm_projects (id_origem,nome,empresa,color,arquivado,criado_em) values
+insert into public.pm_projects (id_origem,nome,empresa_id,color,arquivado,criado_em) select
+  v.id_origem, v.nome, e.id, v.color, v.arquivado, v.criado_em::timestamptz
+from (values
   ('pr_fourpoints','Four Points by Sheraton, Sesimbra','Ocean Sesimbra','#3A72B8',false,'2026-09-21T09:00:00.000Z'),
   ('pr_braamcamp','Avenida Braamcamp','Without Delays','#1F8A6B',false,'2026-09-21T09:01:00.000Z'),
   ('pr_arroios','Arroios, Travessa das Amoreiras','Alternative Shadow','#C07A16',false,'2026-09-21T09:02:00.000Z'),
@@ -32,6 +50,8 @@ insert into public.pm_projects (id_origem,nome,empresa,color,arquivado,criado_em
   ('pr_sintra','Galpão Sintra','Crunchy Prophecy','#6C5AB5',false,'2026-09-21T09:04:00.000Z'),
   ('pr_benfica','Benfica, Calçada do Tojal','Chromatic Parcel','#0E8798',false,'2026-09-21T09:05:00.000Z'),
   ('pr_vistasul','Vistas do Sul','Modernity','#A5518E',false,'2026-09-21T09:06:00.000Z')
+) as v(id_origem,nome,empresa,color,arquivado,criado_em)
+join public.pm_empresas e on lower(e.nome) = lower(v.empresa)
 on conflict (id_origem) do nothing;
 
 -- Tarefas --------------------------------------------------------------------

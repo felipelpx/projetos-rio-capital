@@ -1,43 +1,46 @@
 import { useState } from "react";
 import { Avatar } from "./Bits.jsx";
 import ProjetoEditor from "./ProjetoEditor.jsx";
+import EmpresaEditor from "./EmpresaEditor.jsx";
 import { NIVEIS, NIVEIS_EXPLICACAO } from "../lib/format.js";
 
-/** Projetos agrupados por empresa, por ordem alfabética; particulares no fim. */
-function agrupar(projects) {
+/** Projetos agrupados por empresa, por ordem alfabética; particulares no fim.
+    Agrupa-se pelo empresa_id e não pelo nome: duas empresas podem chamar-se
+    parecido, e o nome pode mudar debaixo dos pés. */
+function agrupar(projects, empresas) {
   const vivos = projects.filter((p) => !p.arquivado);
   const partilhados = vivos.filter((p) => !p.owner_id);
   const meus = vivos.filter((p) => p.owner_id);
   const porNome = (a, b) => String(a.nome).localeCompare(String(b.nome), "pt", { sensitivity: "base" });
 
-  const empresas = [...new Set(partilhados.map((p) => p.empresa).filter(Boolean))].sort((a, b) =>
-    a.localeCompare(b, "pt", { sensitivity: "base" })
-  );
-  const grupos = empresas.map((e) => ({
-    chave: e,
-    titulo: e,
-    itens: partilhados.filter((p) => p.empresa === e).sort(porNome)
+  const usadas = empresas
+    .filter((e) => partilhados.some((p) => p.empresa_id === e.id))
+    .sort((a, b) => a.nome.localeCompare(b.nome, "pt", { sensitivity: "base" }));
+  const grupos = usadas.map((e) => ({
+    chave: e.id,
+    titulo: e.nome,
+    empresa: e,
+    itens: partilhados.filter((p) => p.empresa_id === e.id).sort(porNome)
   }));
-  const soltos = partilhados.filter((p) => !p.empresa).sort(porNome);
+  const soltos = partilhados.filter((p) => !p.empresa_id).sort(porNome);
   if (soltos.length) grupos.push({ chave: "", titulo: "Sem empresa", itens: soltos });
   if (meus.length) grupos.push({ chave: "__priv__", titulo: "Projetos particulares", itens: meus.sort(porNome) });
   return grupos;
 }
 
 export default function Sidebar({
-  projects, tasks, statuses, pessoas, acesso, filtroProjetos, setFiltroProjetos, aberta,
+  projects, empresas = [], tasks, statuses, pessoas, acesso, filtroProjetos, setFiltroProjetos, aberta,
   podeCriar, podeEscrever, guardar, sessaoUserId, recarregar
 }) {
   const [equipaAberta, setEquipaAberta] = useState(false);
   const [colunasAbertas, setColunasAbertas] = useState(false);
   const [arquivoAberto, setArquivoAberto] = useState(false);
   const [aEditar, setAEditar] = useState(null);   // id do projeto, ou "__novo__"
+  const [empresasAbertas, setEmpresasAbertas] = useState(false);
+  const [empEditar, setEmpEditar] = useState(null); // id da empresa, ou "__nova__"
 
-  const empresas = [...new Set(projects.map((p) => p.empresa).filter(Boolean))]
-    .sort((a, b) => a.localeCompare(b, "pt", { sensitivity: "base" }));
-
-  /* Criar um projeto: editor parcial para cima. Alterar um que já existe:
-     só escrita completa — renomear muda-o para toda a gente. */
+  /* Criar um projeto ou uma empresa: editor parcial para cima. Alterar o que já
+     existe: só escrita completa — renomear muda-o para toda a gente. */
   const posso = () => podeEscrever;
 
   const contagem = {};
@@ -60,7 +63,8 @@ export default function Sidebar({
   const linha = (p) => aEditar === p.id ? (
     <ProjetoEditor
       key={p.id} projeto={p} empresas={empresas} guardar={guardar}
-      podeEscrever={podeEscrever} sessaoUserId={sessaoUserId} recarregar={recarregar}
+      podeEscrever={podeEscrever} podeCriar={podeCriar}
+      sessaoUserId={sessaoUserId} recarregar={recarregar}
       onFechar={() => setAEditar(null)}
     />
   ) : (
@@ -95,7 +99,7 @@ export default function Sidebar({
     </div>
   );
 
-  const grupos = agrupar(projects);
+  const grupos = agrupar(projects, empresas);
   const mostrarTitulos = grupos.length > 1 || grupos.some((g) => g.chave);
 
   return (
@@ -127,7 +131,7 @@ export default function Sidebar({
           {aEditar === "__novo__" && (
             <ProjetoEditor
               empresas={empresas} guardar={guardar} podeEscrever={podeEscrever}
-              sessaoUserId={sessaoUserId} recarregar={recarregar}
+              podeCriar={podeCriar} sessaoUserId={sessaoUserId} recarregar={recarregar}
               onFechar={() => setAEditar(null)}
             />
           )}
@@ -139,7 +143,7 @@ export default function Sidebar({
                   className={"pgrouphead" + (g.chave === "__priv__" ? " mine" : "")}
                   onClick={() => setFiltroProjetos(g.itens.map((p) => p.id))}
                 >
-                  {g.titulo}
+                  {g.titulo}{g.empresa?.arquivada ? " · arquivada" : ""}
                   <span>{g.itens.length}</span>
                 </button>
               )}
@@ -168,6 +172,51 @@ export default function Sidebar({
             </>
           )}
         </div>
+      </section>
+
+      <section>
+        <div className="side-head">
+          <button className="sectoggle" aria-expanded={empresasAbertas}
+            onClick={() => setEmpresasAbertas(!empresasAbertas)}>
+            <span className="chev" aria-hidden="true">▾</span>
+            <span className="eyebrow">Empresas</span>
+            <span className="n">{empresas.filter((e) => !e.arquivada).length || ""}</span>
+          </button>
+          {podeCriar && empresasAbertas && (
+            <button className="icon-btn" title="Nova empresa" aria-label="Nova empresa"
+              onClick={() => setEmpEditar(empEditar === "__nova__" ? null : "__nova__")}>+</button>
+          )}
+        </div>
+        {empresasAbertas && (
+          <div className="subbox">
+            {empEditar === "__nova__" && (
+              <EmpresaEditor guardar={guardar} podeEscrever={podeEscrever}
+                onFechar={() => setEmpEditar(null)} />
+            )}
+            {empresas.length === 0 && <p className="hintline">Ainda não há empresas.</p>}
+            {empresas.map((e) => empEditar === e.id ? (
+              <EmpresaEditor key={e.id} empresa={e} guardar={guardar} podeEscrever={podeEscrever}
+                onFechar={() => setEmpEditar(null)} />
+            ) : (
+              <div className={"member" + (e.arquivada ? " archived" : "")} key={e.id}>
+                <span className="nm">
+                  {e.nome}
+                  {e.arquivada && <span className="co"> · arquivada</span>}
+                </span>
+                <span className="ct">{projects.filter((p) => p.empresa_id === e.id).length}</span>
+                {posso() && (
+                  <span className="ed" role="button" title="Editar empresa"
+                    aria-label={"Editar empresa " + e.nome}
+                    onClick={() => setEmpEditar(e.id)}>✎</span>
+                )}
+              </div>
+            ))}
+            <p className="hintline">
+              As empresas não se apagam. Uma que feche arquiva-se: sai das escolhas de projeto
+              novo, e os projetos que teve ficam como estão.
+            </p>
+          </div>
+        )}
       </section>
 
       <section>

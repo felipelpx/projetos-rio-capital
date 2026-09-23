@@ -1,12 +1,12 @@
 -- ============================================================================
--- Rio Capital — conferir os três papéis
+-- Rio Capital — conferir os quatro papéis
 --
 -- Correr no SQL Editor do Supabase DEPOIS do 01 e do 02, e antes de dar acesso
 -- a alguém de fora. Cria três utilizadores de teste, experimenta o que cada um
 -- consegue fazer, e apaga-se a si próprio no fim.
 --
 -- Cada bloco imprime "OK" ou "FALHA". Se aparecer uma FALHA, não avançar.
--- São 13 verificações, sobre os quatro papéis.
+-- São 17 verificações, sobre os quatro papéis.
 --
 -- Em Supabase corre-se tudo de uma vez (Run). O `set request.jwt.claim.sub`
 -- finge que somos cada um dos utilizadores.
@@ -139,8 +139,53 @@ begin
     n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Editor parcial NÃO apaga', 'OK');
   end;
 
+  begin
+    insert into public.pm_empresas (nome) values ('__emp_parcial__');
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor parcial cria empresas', 'OK');
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor parcial cria empresas', 'FALHA — recusado');
+  end;
+
+  begin
+    update public.pm_empresas set nome = '__mexida__' where nome = '__emp_parcial__';
+    if found then
+      n := n + 1; insert into _res (ordem, o_que, resultado)
+      values (n, 'Editor parcial NÃO renomeia empresas', 'FALHA — renomeou');
+    else
+      n := n + 1; insert into _res (ordem, o_que, resultado)
+      values (n, 'Editor parcial NÃO renomeia empresas', 'OK');
+    end if;
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor parcial NÃO renomeia empresas', 'OK');
+  end;
+
   --------------------------------------------------------------------- editor
   perform set_config('request.jwt.claim.sub', v_edit::text, true);
+
+  begin
+    update public.pm_empresas set arquivada = true where nome = '__emp_parcial__';
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor arquiva empresas', case when found then 'OK' else 'FALHA — não conseguiu' end);
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor arquiva empresas', 'FALHA — recusado');
+  end;
+
+  begin
+    delete from public.pm_empresas where nome = '__emp_parcial__';
+    if found then
+      n := n + 1; insert into _res (ordem, o_que, resultado)
+      values (n, 'Ninguém apaga empresas', 'FALHA — apagou');
+    else
+      n := n + 1; insert into _res (ordem, o_que, resultado)
+      values (n, 'Ninguém apaga empresas', 'OK');
+    end if;
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Ninguém apaga empresas', 'OK');
+  end;
 
   begin
     update public.pm_tasks set fim = current_date + 20 where id = v_task;

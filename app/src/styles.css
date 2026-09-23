@@ -138,6 +138,10 @@ button{cursor:pointer}
   padding:6px 9px;font-size:13px;color:var(--ink);max-width:100%;
 }
 .field:hover{border-color:var(--line-strong)}
+select.field{cursor:pointer;appearance:none;padding-right:26px;
+  background-image:linear-gradient(45deg,transparent 50%,var(--ink-3) 50%),linear-gradient(135deg,var(--ink-3) 50%,transparent 50%);
+  background-position:calc(100% - 14px) calc(50% + 1px),calc(100% - 9px) calc(50% + 1px);
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat}
 input.field::placeholder{color:var(--ink-3)}
 .search{width:180px}
 .multi{position:relative;display:inline-block}
@@ -311,8 +315,11 @@ input.field::placeholder{color:var(--ink-3)}
 .member{display:flex;align-items:center;gap:9px;padding:5px 8px;border-radius:8px}
 .member:hover{background:var(--surface-2)}
 .member .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;color:var(--ink-2)}
-.member .ed{opacity:0;font-size:12px}
+.member .ed{opacity:0;font-size:12px;cursor:pointer;color:var(--ink-3);flex:none}
 .member:hover .ed{opacity:1}
+.member .ct{flex:none;font-size:11.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.member.archived .nm{opacity:.6}
+.member .co{color:var(--ink-3);font-size:11.5px}
 
 .avatar{
   flex:none;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;

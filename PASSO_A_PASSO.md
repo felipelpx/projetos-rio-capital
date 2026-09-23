@@ -100,8 +100,8 @@ vez.
 | `role` | na aplicação | o que pode |
 |---|---|---|
 | `admin` | **Super admin** | tudo: cria e altera tarefas, mexe em datas, **repõe a data prevista com justificação**, e dá ou retira acesso às pessoas |
-| `interact` | **Editor** | cria e altera tarefas e projetos, mexe nas datas e nas dependências, apaga, comenta, anexa. **Não** repõe a data prevista nem gere acessos |
-| `contrib` | **Editor parcial** | cria tarefas e projetos, altera tarefas, comenta e anexa. **Não** mexe em datas nem em dependências, **não apaga** nada e **não altera projetos** que já existam |
+| `interact` | **Editor** | cria e altera tarefas, projetos e empresas, mexe nas datas e nas dependências, apaga, comenta, anexa. **Não** repõe a data prevista nem gere acessos |
+| `contrib` | **Editor parcial** | cria tarefas, projetos e empresas, altera tarefas, comenta e anexa. **Não** mexe em datas nem em dependências, **não apaga** nada e **não altera projetos nem empresas** que já existam |
 | `view` | **Visualizador** | vê o quadro e comenta. Não cria nem altera |
 
 Duas fronteiras, ambas de propósito:
@@ -112,9 +112,17 @@ isso exige justificação, deixa registo permanente nos comentários, e só um s
 admin a pode mexer. O editor mexe à vontade na data de fim real — é isso que faz
 aparecer o desvio e empurra as tarefas dependentes.
 
-**Alterar um projeto** — o nome, a empresa, a cor, arquivá-lo — muda-o para
-toda a gente, por isso fica do lado do editor. Criar um novo não desfaz nada, e
-está aberto ao editor parcial.
+**Alterar um projeto ou uma empresa** — o nome, a cor, arquivá-los — muda-os
+para toda a gente, por isso fica do lado do editor. Criar de novo não desfaz
+nada, e está aberto ao editor parcial.
+
+**As empresas** são uma lista à parte, na barra lateral (secção *Empresas*): o
+**+** cria, o **✎** renomeia ou arquiva. Renomear acerta o nome em todos os
+projetos dessa empresa de uma vez. **Não se apagam**: uma empresa que feche
+arquiva-se — sai das escolhas quando se cria um projeto novo, e os projetos que
+ela teve ficam exatamente como estão, com o nome dela, que é o que interessa
+daqui a dois anos quando alguém for ver o que se passou. A empresa de um projeto
+escolhe-se no editor do projeto, e pode criar-se ali mesmo.
 
 **As datas em geral** separam o editor do editor parcial. O editor parcial cria
 tarefas, muda títulos, estados, prioridades, notas, responsáveis e anexos, e
