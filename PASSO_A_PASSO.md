@@ -145,11 +145,20 @@ uma opção do filtro. Passando o rato por cima de uma linha do filtro aparece u
 substituir o ficheiro pelo novo com o mesmo nome. Se depois de publicar
 continuares a ver o ícone antigo, é o browser a guardá-lo: **Ctrl+Shift+R**.
 
-**A foto do projeto** carrega-se no editor do projeto (o **✎** na barra
-lateral), e aparece numa faixa no topo da coluna, logo debaixo do nome, na vista
-**Projetos**. Vai para o mesmo balde dos anexos, numa pasta por projeto, e o
+**A foto do projeto** põe-se na vista **Projetos**: no topo de cada coluna, por
+baixo do nome, há um **＋ Pôr foto**. Depois de carregada, passando o rato por
+cima da foto aparecem **Inteira / Trocar / Tirar**. Também se pode fazer pelo
+editor do projeto (o **✎** na barra lateral), mas o sítio natural é a coluna.
+
+A foto aparece numa faixa no topo da coluna, na vista **Projetos**. Vai para o mesmo balde dos anexos, numa pasta por projeto, e o
 endereço é assinado na altura — ninguém vê a foto sem ter acesso à área de
 projetos. Até 5 MB.
+
+**Antes da primeira foto**, o armazenamento tem de estar feito: no Supabase,
+*Storage → New bucket → `pm-anexos`, privado*, e depois correr o
+`04_anexos.sql`. É o mesmo balde dos anexos das tarefas, por isso se já
+carregaste um anexo, está feito. Se faltar alguma coisa, a aplicação diz
+exatamente qual em vez de falhar em silêncio.
 
 Por omissão a imagem preenche a faixa e as bordas ficam cortadas, que é o que se
 quer numa fotografia. A caixa **mostrar a imagem inteira**, no mesmo editor, faz

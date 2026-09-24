@@ -244,7 +244,9 @@ input.field::placeholder{color:var(--ink-3)}
 .navrow .dot{flex:none;width:9px;height:9px;border-radius:3px;background:var(--ink-3)}
 .navrow .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .navrow .ct{flex:none;font-size:11.5px;color:var(--ink-3);font-family:"IBM Plex Mono",monospace}
-.navrow .ed{flex:none;opacity:0;font-size:12px;color:var(--ink-3)}
+/* Visível o suficiente para se dar por ele sem ter de descobrir o rato por
+   cima; vivo ao passar. */
+.navrow .ed{flex:none;opacity:.4;font-size:12px;color:var(--ink-3)}
 .prow{display:flex;align-items:center;gap:7px;padding-left:4px}
 .prow .navrow{flex:1 1 auto;min-width:0}
 .pcheck{flex:none;accent-color:var(--accent);margin:0;width:14px;height:14px}
@@ -448,7 +450,7 @@ input.field::placeholder{color:var(--ink-3)}
    obra de relance. Vai de bordo a bordo, com a altura fixa para as colunas
    ficarem todas alinhadas venham as fotos no formato que vierem. */
 .col-foto{
-  flex:none;line-height:0;background:var(--surface-3);
+  flex:none;position:relative;line-height:0;background:var(--surface-3);
   border-bottom:1px solid var(--line);margin-top:-1px;
 }
 .col-foto img{width:100%;height:142px;object-fit:cover;display:block}
@@ -456,6 +458,40 @@ input.field::placeholder{color:var(--ink-3)}
    com margem. Escolhe-se por projeto, no editor. */
 .col-foto.inteira{background:var(--surface)}
 .col-foto.inteira img{object-fit:contain;padding:6px;box-sizing:border-box}
+
+/* Sem foto: um convite discreto, do tamanho da faixa que vai ocupar. */
+.col-foto.vazia{
+  background:transparent;border-bottom:1px dashed var(--line);
+}
+.capa-por{
+  width:100%;height:58px;border:0;background:transparent;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  font-family:"IBM Plex Sans",sans-serif;font-size:12px;color:var(--ink-3);
+  border-radius:0;
+}
+.capa-por:hover{background:var(--surface-3);color:var(--accent)}
+.capa-por span{font-size:14px;line-height:1}
+.capa-nota{
+  display:flex;align-items:center;justify-content:center;height:142px;
+  font-size:11.5px;color:var(--ink-3);line-height:1.4;
+}
+/* Trocar e tirar aparecem por cima da foto, ao passar o rato. */
+.capa-acoes{
+  position:absolute;top:6px;right:6px;display:flex;gap:4px;
+  opacity:0;transition:opacity .12s;
+}
+.col:hover .capa-acoes{opacity:1}
+.capa-acoes button{
+  border:0;border-radius:6px;padding:3px 8px;cursor:pointer;line-height:1.5;
+  font-family:"IBM Plex Sans",sans-serif;font-size:11px;
+  background:rgba(12,22,30,.72);color:#fff;backdrop-filter:blur(3px);
+}
+.capa-acoes button:hover{background:rgba(12,22,30,.9)}
+.capa-acoes button:disabled{opacity:.5;cursor:default}
+.capa-msg{
+  margin:0;padding:7px 10px;font-size:11.5px;line-height:1.45;
+  color:var(--crit);background:var(--crit-wash);
+}
 
 .fotorow{display:flex;align-items:center;gap:9px}
 .fotoprev{

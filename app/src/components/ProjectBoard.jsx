@@ -2,12 +2,13 @@ import Card from "./Card.jsx";
 import FiltroBar from "./FiltroBar.jsx";
 import { Vazio } from "./Bits.jsx";
 import { eurCurto, somarCusto } from "../lib/format.js";
+import CapaProjeto from "./CapaProjeto.jsx";
 
 /** Quadro com uma coluna por projeto. */
 export default function ProjectBoard({ ctx, criarTarefa }) {
   const { base, listaFiltrada, statuses, projects, pessoas, hoje, fotos = {},
           contarComentarios, contarAnexos, bloqueada, onAbrir, podeCriar,
-          filtroProjetos, ordemEstado } = ctx;
+          podeEscrever, guardar, filtroProjetos, ordemEstado } = ctx;
 
   const colunas = (filtroProjetos
     ? projects.filter((p) => filtroProjetos.includes(p.id))
@@ -35,11 +36,8 @@ export default function ProjectBoard({ ctx, criarTarefa }) {
                 <h3>{p.nome}{p.owner_id && <span className="lock"> ●</span>}</h3>
                 <span className="ct">{col.length}</span>
               </div>
-              {p.foto && fotos[p.foto] && (
-                <div className={"col-foto" + (p.foto_inteira ? " inteira" : "")}>
-                  <img src={fotos[p.foto]} alt={"Foto de " + p.nome} loading="lazy" />
-                </div>
-              )}
+              <CapaProjeto projeto={p} url={fotos[p.foto]} guardar={guardar}
+                podeEscrever={podeEscrever} />
               {(() => {
                 /* O que interessa ver no topo da coluna é quanto está orçamentado
                    aqui dentro, e quantas tarefas ainda não têm número. */

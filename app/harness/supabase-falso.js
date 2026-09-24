@@ -214,6 +214,9 @@ export const supabase = {
      endereço de blob, que chega para as fotos aparecerem na pré-visualização. */
   storage: { from: () => ({
     upload: (caminho, f) => {
+      if (!podeEscrever()) {
+        return Promise.resolve({ error: { message: "new row violates row-level security policy" } });
+      }
       ficheiros.set(caminho, URL.createObjectURL(f));
       return Promise.resolve({ data: { path: caminho }, error: null });
     },

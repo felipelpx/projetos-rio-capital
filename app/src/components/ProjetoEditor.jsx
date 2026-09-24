@@ -1,9 +1,7 @@
 import { useRef, useState } from "react";
 import { supabase } from "../lib/supabase.js";
 import { PALETA } from "../lib/format.js";
-
-const BUCKET = "pm-anexos";
-const MAX = 5 * 1024 * 1024;
+import { carregarFotoProjeto, removerFotoProjeto, porqueNaoServe } from "../data/fotoProjeto.js";
 
 /**
  * Criar ou alterar um projeto, na própria barra lateral.
@@ -37,28 +35,17 @@ export default function ProjetoEditor({
   async function escolherFoto(e) {
     const f = e.target.files?.[0];
     if (ficheiro.current) ficheiro.current.value = "";
-    if (!f) return;
-    if (!f.type.startsWith("image/")) { setMsgFoto("Escolhe uma imagem."); return; }
-    if (f.size > MAX) { setMsgFoto("A imagem não pode passar de 5 MB."); return; }
+    const mau = porqueNaoServe(f);
+    if (mau) { setMsgFoto(mau); return; }
     setMsgFoto("");
+    /* Num projeto novo ainda não há id para lhe pendurar a foto: guarda-se o
+       ficheiro e carrega-se assim que o projeto existir. */
     if (novo) { setPorCarregar(f); setFoto(URL.createObjectURL(f)); return; }
-    await carregarFoto(projeto.id, f);
-  }
-
-  async function carregarFoto(id, f) {
-    const ext = (f.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
-    const caminho = `projetos/${id}/capa-${Date.now()}.${ext}`;
     setMsgFoto("A carregar…");
-    const up = await supabase.storage.from(BUCKET).upload(caminho, f, { upsert: false });
-    if (up.error) { setMsgFoto(up.error.message); return null; }
-    /* Só depois de o novo estar lá em cima é que se apaga o antigo: se algo
-       correr mal a meio, fica-se com a foto velha e não sem nenhuma. */
-    const antigo = projeto?.foto;
-    await guardar(() => supabase.from("pm_projects").update({ foto: caminho }).eq("id", id));
-    if (antigo && antigo !== caminho) await supabase.storage.from(BUCKET).remove([antigo]);
-    setFoto(caminho);
+    const r = await carregarFotoProjeto(projeto.id, f, guardar, projeto.foto);
+    if (r.erro) { setMsgFoto(r.erro); return; }
+    setFoto(r.caminho);
     setMsgFoto("");
-    return caminho;
   }
 
   async function tirarFoto() {
@@ -66,9 +53,8 @@ export default function ProjetoEditor({
     setFoto(null);
     setMsgFoto("");
     if (novo || !projeto?.foto) return;
-    const antigo = projeto.foto;
-    await guardar(() => supabase.from("pm_projects").update({ foto: null }).eq("id", projeto.id));
-    await supabase.storage.from(BUCKET).remove([antigo]);
+    const r = await removerFotoProjeto(projeto.id, projeto.foto, guardar);
+    if (r.erro) setMsgFoto(r.erro);
   }
 
   async function submeter(e) {
