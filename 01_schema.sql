@@ -162,8 +162,16 @@ create table if not exists public.pm_projects (
   color       text not null default '#3A72B8',
   arquivado   boolean not null default false,
   owner_id    uuid references public.profiles(id) on delete cascade,
+  -- caminho da foto dentro do balde pm-anexos (ex.: projetos/<id>/capa.jpg);
+  -- o endereço para a mostrar é assinado na altura, como nos anexos
+  foto        text,
+  -- true = mostrar a imagem inteira, sem cortar. Serve para plantas, ortofotos
+  -- e logótipos, que perdem o sentido se lhes cortarem as bordas.
+  foto_inteira boolean not null default false,
   criado_em   timestamptz not null default now()
 );
+alter table public.pm_projects add column if not exists foto text;
+alter table public.pm_projects add column if not exists foto_inteira boolean not null default false;
 create index if not exists pm_projects_owner_idx on public.pm_projects(owner_id);
 
 
@@ -270,8 +278,25 @@ create table if not exists public.pm_tasks (
   notas         text not null default '',
   posicao       numeric not null default 1000,   -- ordem manual dentro da coluna
   owner_id      uuid references public.profiles(id) on delete cascade, -- tarefa particular
+  setor         text check (setor in ('comercial','operacional')),
+  tem_custo     boolean not null default false,   -- "esta tarefa vai custar dinheiro"
+  custo_previsto numeric(12,2),                   -- orçamento, em euros; ver secção 5b
   criado_em     timestamptz not null default now()
 );
+-- Quem criou a tabela antes destas colunas existirem.
+-- O setor fica por preencher nas tarefas antigas, de propósito: pô-las todas
+-- num setor à força era inventar informação que ninguém deu.
+alter table public.pm_tasks add column if not exists setor text;
+do $$ begin
+  alter table public.pm_tasks add constraint pm_tasks_setor_check
+    check (setor is null or setor in ('comercial','operacional'));
+exception when duplicate_object then null; end $$;
+alter table public.pm_tasks add column if not exists tem_custo boolean not null default false;
+alter table public.pm_tasks add column if not exists custo_previsto numeric(12,2);
+do $$ begin
+  alter table public.pm_tasks add constraint pm_tasks_custo_check
+    check (custo_previsto is null or custo_previsto >= 0);
+exception when duplicate_object then null; end $$;
 create index if not exists pm_tasks_project_idx on public.pm_tasks(project_id);
 create index if not exists pm_tasks_status_idx  on public.pm_tasks(status_id);
 create index if not exists pm_tasks_owner_idx   on public.pm_tasks(owner_id);
@@ -280,6 +305,12 @@ create index if not exists pm_tasks_owner_idx   on public.pm_tasks(owner_id);
 create or replace function public.pm_fixar_fim_previsto()
 returns trigger language plpgsql as $$
 begin
+  -- A reposição da secção 5 levanta esta bandeira antes de escrever. Sem ela,
+  -- o gatilho repunha o valor antigo e a reposição não fazia nada — só ficava
+  -- o comentário a dizer que tinha feito.
+  if coalesce(current_setting('pm.replanear', true), '') = '1' then
+    return new;
+  end if;
   if new.fim is not null and old.fim_previsto is null then
     new.fim_previsto := new.fim;
   elsif old.fim_previsto is not null then
@@ -299,19 +330,33 @@ create trigger pm_tasks_fim_previsto
 create or replace function public.pm_guardar_datas()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  -- Operações do servidor (sem sessão) e de quem tem escrita completa passam.
-  if auth.uid() is null or public.pode_escrever('projetos') then
+  -- Operações do servidor (sem sessão) e as que vêm das funções com
+  -- justificação (secção 5) passam.
+  if auth.uid() is null
+     or coalesce(current_setting('pm.replanear', true), '') = '1' then
     return new;
   end if;
-  if tg_op = 'INSERT' then
-    if new.inicio is not null or new.fim is not null or new.fim_previsto is not null then
-      raise exception 'O teu acesso não permite definir datas.';
-    end if;
-  else
-    if new.inicio       is distinct from old.inicio
-    or new.fim          is distinct from old.fim
-    or new.fim_previsto is distinct from old.fim_previsto then
+
+  if not public.pode_escrever('projetos') then
+    if tg_op = 'INSERT' then
+      if new.inicio is not null or new.fim is not null or new.fim_previsto is not null then
+        raise exception 'O teu acesso não permite definir datas.';
+      end if;
+    elsif new.inicio       is distinct from old.inicio
+       or new.fim          is distinct from old.fim
+       or new.fim_previsto is distinct from old.fim_previsto then
       raise exception 'O teu acesso não permite alterar datas.';
+    end if;
+    return new;
+  end if;
+
+  -- Escrever a primeira data é preencher, não alterar: passa. Mexer numa data
+  -- que já lá estava muda o plano de toda a gente, e passa pela função
+  -- pm_alterar_datas, que obriga a dizer porquê.
+  if tg_op = 'UPDATE' then
+    if (old.inicio is not null and new.inicio is distinct from old.inicio)
+    or (old.fim    is not null and new.fim    is distinct from old.fim) then
+      raise exception 'Alterar uma data já marcada exige uma justificação.';
     end if;
   end if;
   return new;
@@ -321,6 +366,57 @@ drop trigger if exists pm_tasks_datas on public.pm_tasks;
 create trigger pm_tasks_datas
   before insert or update on public.pm_tasks
   for each row execute function public.pm_guardar_datas();
+
+-- O orçamento segue a mesma regra da linha de base: escreve-se uma vez, e
+-- mudá-lo depois é um ato deliberado de quem manda. Quem tem escrita completa
+-- põe o valor numa tarefa que ainda não o tinha; alterar um valor já lá posto
+-- passa pela função da secção 5b, que exige super admin e justificação.
+create or replace function public.pm_guardar_custo()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null
+     or coalesce(current_setting('pm.replanear', true), '') = '1' then
+    return new;
+  end if;
+
+  if not public.pode_escrever('projetos') then
+    if tg_op = 'INSERT' then
+      if new.tem_custo or new.custo_previsto is not null then
+        raise exception 'O teu acesso não permite definir custos.';
+      end if;
+    elsif new.tem_custo is distinct from old.tem_custo
+       or new.custo_previsto is distinct from old.custo_previsto then
+      raise exception 'O teu acesso não permite alterar custos.';
+    end if;
+    return new;
+  end if;
+
+  -- Qualquer euro escrito passa pela função da secção 5b, que exige
+  -- justificação. Marcar só "tem custo", sem valor, é livre: não é dinheiro,
+  -- é um aviso de que ainda falta orçamentar.
+  if tg_op = 'UPDATE' and new.custo_previsto is distinct from old.custo_previsto then
+    if old.custo_previsto is null then
+      raise exception 'Gravar um orçamento exige uma justificação.';
+    else
+      raise exception 'Alterar um orçamento já gravado exige um super admin e uma justificação.';
+    end if;
+  end if;
+  if tg_op = 'INSERT' and new.custo_previsto is not null then
+    raise exception 'Gravar um orçamento exige uma justificação.';
+  end if;
+  -- Desmarcar "tem custo" com orçamento posto equivalia a apagá-lo pela porta das traseiras.
+  if tg_op = 'UPDATE' and old.custo_previsto is not null and not new.tem_custo then
+    raise exception 'A tarefa tem orçamento. Para o retirar é preciso um super admin.';
+  end if;
+  -- Um valor implica sempre a marca, para os dois não se contradizerem.
+  if new.custo_previsto is not null then new.tem_custo := true; end if;
+  return new;
+end;
+$$;
+drop trigger if exists pm_tasks_custo on public.pm_tasks;
+create trigger pm_tasks_custo
+  before insert or update on public.pm_tasks
+  for each row execute function public.pm_guardar_custo();
 
 create table if not exists public.pm_task_assignees (
   task_id   uuid not null references public.pm_tasks(id) on delete cascade,
@@ -360,13 +456,31 @@ create table if not exists public.pm_comments (
   task_id     uuid not null references public.pm_tasks(id) on delete cascade,
   autor_id    uuid references public.profiles(id) on delete set null,
   tipo        text not null default 'comentario'
-              check (tipo in ('comentario','replaneamento')),
+              check (tipo in ('comentario','replaneamento','orcamento','datas')),
   texto       text not null,
   de_data     date,   -- só em 'replaneamento'
   para_data   date,   -- só em 'replaneamento'
   criado_em   timestamptz not null default now(),
   editado_em  timestamptz
 );
+alter table public.pm_comments add column if not exists campo      text;  -- 'inicio' | 'fim', nos registos de datas
+alter table public.pm_comments add column if not exists de_valor   numeric(12,2);
+alter table public.pm_comments add column if not exists para_valor numeric(12,2);
+-- O tipo 'orcamento' não existia na primeira versão; `create table if not
+-- exists` não mexe numa tabela que já lá está, por isso a restrição troca-se aqui.
+do $$
+declare v_nome text;
+begin
+  select conname into v_nome from pg_constraint
+   where conrelid = 'public.pm_comments'::regclass and contype = 'c'
+     and pg_get_constraintdef(oid) ilike '%tipo%replaneamento%';
+  if v_nome is not null then
+    execute format('alter table public.pm_comments drop constraint %I', v_nome);
+  end if;
+  alter table public.pm_comments add constraint pm_comments_tipo_check
+    check (tipo in ('comentario','replaneamento','orcamento','datas'));
+exception when duplicate_object then null;
+end $$;
 create index if not exists pm_comments_task_idx on public.pm_comments(task_id);
 
 create table if not exists public.pm_attachments (
@@ -408,8 +522,118 @@ begin
   insert into public.pm_comments (task_id, autor_id, tipo, texto, de_data, para_data)
   values (p_task, auth.uid(), 'replaneamento', p_justificacao, v_antiga, v_nova);
 
-  update public.pm_tasks set fim_previsto = null where id = p_task;
+  perform set_config('pm.replanear', '1', true);
   update public.pm_tasks set fim_previsto = v_nova where id = p_task;
+  perform set_config('pm.replanear', '0', true);
+end;
+$$;
+
+
+-- ----------------------------------------------------------------------------
+-- 5a. Alterar datas já marcadas — deixa sempre registo
+-- ----------------------------------------------------------------------------
+-- Marcar a primeira data faz-se na tarefa, sem cerimónia. Mexer numa data que
+-- já lá estava mexe no plano de toda a gente, e só por aqui: uma linha nos
+-- comentários por cada data que muda, com quem mudou e porquê.
+--
+-- p_empurrada_por serve a cascata: quando uma tarefa é arrastada por outra de
+-- que depende, a justificação escreve-se sozinha em vez de perguntar. Só é
+-- aceite se a tarefa indicada for mesmo uma antecessora desta.
+create or replace function public.pm_alterar_datas(
+  p_task uuid, p_inicio date, p_fim date, p_justificacao text,
+  p_empurrada_por uuid default null
+) returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_ini date; v_fim date; v_prev date; v_just text; v_nova_base date;
+begin
+  if not public.pode_escrever('projetos') then
+    raise exception 'O teu acesso não permite alterar datas.';
+  end if;
+  select inicio, fim, fim_previsto into v_ini, v_fim, v_prev
+    from public.pm_tasks where id = p_task;
+  if not found then raise exception 'A tarefa não existe.'; end if;
+
+  if p_empurrada_por is not null then
+    if not exists (select 1 from public.pm_task_deps
+                    where task_id = p_task and depende_de = p_empurrada_por) then
+      raise exception 'Essa tarefa não é antecessora desta.';
+    end if;
+    v_just := 'Empurrada automaticamente por: '
+              || coalesce(nullif((select titulo from public.pm_tasks where id = p_empurrada_por), ''),
+                          'outra tarefa');
+  else
+    v_just := trim(coalesce(p_justificacao, ''));
+    if v_just = '' then raise exception 'A justificação é obrigatória.'; end if;
+  end if;
+
+  if p_inicio is not null and p_fim is not null and p_fim < p_inicio then
+    raise exception 'O fim não pode ser antes do início.';
+  end if;
+
+  if p_inicio is distinct from v_ini then
+    insert into public.pm_comments (task_id, autor_id, tipo, campo, texto, de_data, para_data)
+    values (p_task, auth.uid(), 'datas', 'inicio', v_just, v_ini, p_inicio);
+  end if;
+  if p_fim is distinct from v_fim then
+    insert into public.pm_comments (task_id, autor_id, tipo, campo, texto, de_data, para_data)
+    values (p_task, auth.uid(), 'datas', 'fim', v_just, v_fim, p_fim);
+  end if;
+
+  /* A bandeira que deixa passar os gatilhos também trava o que fixa a linha de
+     base, por isso trata-se dela aqui. Numa tarefa que ainda não tinha linha de
+     base, o plano era o fim que lá estava: é esse que se guarda, senão a
+     derrapagem que estamos a criar desaparecia. */
+  v_nova_base := coalesce(v_prev, v_fim, p_fim);
+
+  perform set_config('pm.replanear', '1', true);
+  update public.pm_tasks
+     set inicio = p_inicio, fim = p_fim, fim_previsto = v_nova_base
+   where id = p_task;
+  perform set_config('pm.replanear', '0', true);
+end;
+$$;
+
+
+-- ----------------------------------------------------------------------------
+-- 5b. Gravar e alterar orçamentos — deixa sempre registo
+-- ----------------------------------------------------------------------------
+-- Passar p_valor a null retira o orçamento e a marca de custo.
+create or replace function public.pm_definir_orcamento(
+  p_task uuid, p_valor numeric, p_justificacao text
+) returns void language plpgsql security definer set search_path = public as $$
+declare v_antigo numeric(12,2);
+begin
+  -- SECURITY DEFINER passa por cima do RLS: o papel confere-se aqui dentro.
+  select custo_previsto into v_antigo from public.pm_tasks where id = p_task;
+  if not found then raise exception 'A tarefa não existe.'; end if;
+  -- Gravar o primeiro orçamento é de quem tem escrita completa; mexer num que
+  -- já lá está é só do super admin. Justificação, em qualquer dos casos.
+  if v_antigo is null then
+    if not public.pode_escrever('projetos') then
+      raise exception 'O teu acesso não permite definir custos.';
+    end if;
+  elsif not public.e_admin('projetos') then
+    raise exception 'Só um super admin pode alterar um orçamento já definido.';
+  end if;
+  if coalesce(trim(p_justificacao),'') = '' then
+    raise exception 'A justificação é obrigatória.';
+  end if;
+  if p_valor is not null and p_valor < 0 then
+    raise exception 'O orçamento não pode ser negativo.';
+  end if;
+  if p_valor is not distinct from v_antigo then
+    raise exception 'O valor é o mesmo que já lá estava.';
+  end if;
+
+  insert into public.pm_comments (task_id, autor_id, tipo, texto, de_valor, para_valor)
+  values (p_task, auth.uid(), 'orcamento', p_justificacao, v_antigo, p_valor);
+
+  perform set_config('pm.replanear', '1', true);
+  update public.pm_tasks
+     set custo_previsto = p_valor,
+         tem_custo = case when p_valor is null then false else true end
+   where id = p_task;
+  perform set_config('pm.replanear', '0', true);
 end;
 $$;
 

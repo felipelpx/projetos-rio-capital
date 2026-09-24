@@ -99,9 +99,9 @@ vez.
 
 | `role` | na aplicação | o que pode |
 |---|---|---|
-| `admin` | **Super admin** | tudo: cria e altera tarefas, mexe em datas, **repõe a data prevista com justificação**, e dá ou retira acesso às pessoas |
+| `admin` | **Super admin** | tudo: cria e altera tarefas, mexe em datas, **repõe a data prevista e altera orçamentos já gravados, com justificação**, e dá ou retira acesso às pessoas |
 | `interact` | **Editor** | cria e altera tarefas, projetos e empresas, mexe nas datas e nas dependências, apaga, comenta, anexa. **Não** repõe a data prevista nem gere acessos |
-| `contrib` | **Editor parcial** | cria tarefas, projetos e empresas, altera tarefas, comenta e anexa. **Não** mexe em datas nem em dependências, **não apaga** nada e **não altera projetos nem empresas** que já existam |
+| `contrib` | **Editor parcial** | cria tarefas, projetos e empresas, altera tarefas, comenta e anexa. **Não** mexe em datas, custos nem dependências, **não apaga** nada e **não altera projetos nem empresas** que já existam |
 | `view` | **Visualizador** | vê o quadro e comenta. Não cria nem altera |
 
 Duas fronteiras, ambas de propósito:
@@ -123,6 +123,46 @@ arquiva-se — sai das escolhas quando se cria um projeto novo, e os projetos qu
 ela teve ficam exatamente como estão, com o nome dela, que é o que interessa
 daqui a dois anos quando alguém for ver o que se passou. A empresa de um projeto
 escolhe-se no editor do projeto, e pode criar-se ali mesmo.
+
+**Toda a alteração de datas ou de orçamento leva justificação.** Marcar a
+primeira data, ou gravar o primeiro orçamento, é preencher — e o primeiro
+orçamento já pede a razão. A partir daí, mexer numa data ou num valor que já lá
+estava abre um campo a perguntar porquê, e a resposta fica nos comentários da
+tarefa com o nome de quem mexeu e o valor antigo. Não é só o ecrã a pedir: a
+base de dados recusa a alteração sem justificação, venha ela de onde vier.
+Quando uma tarefa é empurrada por outra de que depende, a justificação
+escreve-se sozinha ("Empurrada automaticamente por: …") em vez de interromper.
+
+**O setor** (Comercial / Operacional) marca-se na ficha da tarefa, tem coluna
+própria na Lista e filtro próprio nas barras de filtro. As tarefas antigas ficam
+sem setor até alguém lhes atribuir um — aparecem como "Sem setor", que também é
+uma opção do filtro. Passando o rato por cima de uma linha do filtro aparece um
+**só**, que mostra apenas esse setor de uma vez.
+
+**O logótipo** está em `app/public/`: `logo.png` (cabeçalho), `logo-claro.png`
+(a mesma, aclarada, para quem usa o computador em modo escuro) e `favicon.png`
+(o símbolo, para o separador do browser). Para trocar qualquer um deles basta
+substituir o ficheiro pelo novo com o mesmo nome. Se depois de publicar
+continuares a ver o ícone antigo, é o browser a guardá-lo: **Ctrl+Shift+R**.
+
+**A foto do projeto** carrega-se no editor do projeto (o **✎** na barra
+lateral), e aparece numa faixa no topo da coluna, logo debaixo do nome, na vista
+**Projetos**. Vai para o mesmo balde dos anexos, numa pasta por projeto, e o
+endereço é assinado na altura — ninguém vê a foto sem ter acesso à área de
+projetos. Até 5 MB.
+
+Por omissão a imagem preenche a faixa e as bordas ficam cortadas, que é o que se
+quer numa fotografia. A caixa **mostrar a imagem inteira**, no mesmo editor, faz
+o contrário: a imagem aparece toda, com margem à volta. É a opção certa para
+plantas, ortofotos e logótipos, que ficam sem sentido se lhes cortarem os
+cantos.
+
+**O orçamento de uma tarefa** segue a regra da data prevista: quem tem escrita
+completa grava-o na tarefa que ainda não o tinha, e a partir daí só um super
+admin o altera, com justificação, ficando o valor antigo registado nos
+comentários. O editor parcial e o visualizador veem o valor mas não lhe tocam.
+Quem tem acesso à área de projetos **vê todos os orçamentos** — incluindo os
+visualizadores. Só os projetos particulares ficam de fora.
 
 **As datas em geral** separam o editor do editor parcial. O editor parcial cria
 tarefas, muda títulos, estados, prioridades, notas, responsáveis e anexos, e

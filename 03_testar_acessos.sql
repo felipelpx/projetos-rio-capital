@@ -6,7 +6,7 @@
 -- consegue fazer, e apaga-se a si próprio no fim.
 --
 -- Cada bloco imprime "OK" ou "FALHA". Se aparecer uma FALHA, não avançar.
--- São 17 verificações, sobre os quatro papéis.
+-- São 29 verificações, sobre os quatro papéis.
 --
 -- Em Supabase corre-se tudo de uma vez (Run). O `set request.jwt.claim.sub`
 -- finge que somos cada um dos utilizadores.
@@ -110,6 +110,15 @@ begin
   perform set_config('request.jwt.claim.sub', v_parc::text, true);
 
   begin
+    update public.pm_tasks set tem_custo = true where id = v_task;
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor parcial NÃO mexe em custos', 'FALHA — mexeu');
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor parcial NÃO mexe em custos', 'OK');
+  end;
+
+  begin
     insert into public.pm_tasks (titulo, status_id)
     values ('__parcial__', (select id from public.pm_statuses order by posicao limit 1));
     n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Editor parcial cria tarefas', 'OK');
@@ -189,9 +198,52 @@ begin
 
   begin
     update public.pm_tasks set fim = current_date + 20 where id = v_task;
-    n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Editor muda o fim real', case when found then 'OK' else 'FALHA — não conseguiu' end);
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor NÃO muda datas sem justificação', 'FALHA — mudou');
   exception when others then
-    n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Editor muda o fim real', 'FALHA — recusado');
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor NÃO muda datas sem justificação', 'OK');
+  end;
+
+  begin
+    perform public.pm_alterar_datas(v_task, current_date, current_date + 20, 'obra atrasou-se');
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor muda o fim real, com justificação',
+            case when (select fim from public.pm_tasks where id = v_task) = current_date + 20
+                 then 'OK' else 'FALHA — a data não mudou' end);
+  exception when others then
+    get stacked diagnostics v_erro = message_text;
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor muda o fim real, com justificação', 'FALHA — ' || left(v_erro, 40));
+  end;
+
+  begin
+    perform public.pm_alterar_datas(v_task, current_date, current_date + 25, '   ');
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Data SEM justificação é recusada', 'FALHA — passou');
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Data SEM justificação é recusada', 'OK');
+  end;
+
+  begin
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'A mudança de data deixou registo',
+            case when exists (select 1 from public.pm_comments
+                               where task_id = v_task and tipo = 'datas' and campo = 'fim'
+                                 and para_data = current_date + 20
+                                 and texto = 'obra atrasou-se')
+                 then 'OK' else 'FALHA — sem registo' end);
+  end;
+
+  begin
+    perform public.pm_alterar_datas(v_task, current_date, current_date + 30, null,
+                                    '00000000-0000-4000-a000-0000000000ff');
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Cascata falsa é recusada', 'FALHA — passou');
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Cascata falsa é recusada', 'OK');
   end;
 
   begin
@@ -211,12 +263,87 @@ begin
     n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Editor NÃO dá acessos', 'OK');
   end;
 
+  begin
+    update public.pm_tasks set custo_previsto = 1000, tem_custo = true where id = v_task;
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Orçamento SEM justificação é recusado (directo)', 'FALHA — gravou');
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Orçamento SEM justificação é recusado (directo)', 'OK');
+  end;
+
+  begin
+    perform public.pm_definir_orcamento(v_task, 1000, 'orçamento inicial do empreiteiro');
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor grava o primeiro orçamento, com justificação',
+            case when (select custo_previsto from public.pm_tasks where id = v_task) = 1000
+                 then 'OK' else 'FALHA — não gravou' end);
+  exception when others then
+    get stacked diagnostics v_erro = message_text;
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor grava o primeiro orçamento, com justificação', 'FALHA — ' || left(v_erro, 40));
+  end;
+
+  begin
+    update public.pm_tasks set custo_previsto = 9999 where id = v_task;
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor NÃO altera um orçamento já posto', 'FALHA — alterou');
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor NÃO altera um orçamento já posto', 'OK');
+  end;
+
+  begin
+    perform public.pm_definir_orcamento(v_task, 9999, 'tentativa de editor');
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor NÃO altera pela função o que já está gravado', 'FALHA — usou');
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor NÃO altera pela função o que já está gravado', 'OK');
+  end;
+
   ---------------------------------------------------------------- super admin
   perform set_config('request.jwt.claim.sub', v_super::text, true);
 
   begin
+    perform public.pm_definir_orcamento(v_task, 2500, 'empreiteiro reviu o preço');
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Super admin altera o orçamento',
+            case when (select custo_previsto from public.pm_tasks where id = v_task) = 2500
+                 then 'OK' else 'FALHA — o valor não mudou' end);
+  exception when others then
+    get stacked diagnostics v_erro = message_text;
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Super admin altera o orçamento', 'FALHA — ' || left(v_erro, 40));
+  end;
+
+  begin
+    perform public.pm_definir_orcamento(v_task, 10, '  ');
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Orçamento SEM justificação é recusado', 'FALHA — passou');
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Orçamento SEM justificação é recusado', 'OK');
+  end;
+
+  begin
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'A alteração do orçamento deixou registo',
+            case when exists (select 1 from public.pm_comments
+                               where task_id = v_task and tipo = 'orcamento'
+                                 and de_valor = 1000 and para_valor = 2500)
+                 then 'OK' else 'FALHA — sem registo' end);
+  end;
+
+  begin
     perform public.pm_repor_fim_previsto(v_task, 'replaneamento de teste');
-    n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Super admin repõe a data prevista', 'OK');
+    -- Não basta não dar erro: a data tem mesmo de ficar igual ao fim real.
+    if (select fim_previsto = fim from public.pm_tasks where id = v_task) then
+      n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Super admin repõe a data prevista', 'OK');
+    else
+      n := n + 1; insert into _res (ordem, o_que, resultado)
+      values (n, 'Super admin repõe a data prevista', 'FALHA — a data não mudou');
+    end if;
   exception when others then
     get stacked diagnostics v_erro = message_text;
     n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Super admin repõe a data prevista', 'FALHA — ' || left(v_erro, 40));

@@ -29,7 +29,7 @@ function agrupar(projects, empresas) {
 }
 
 export default function Sidebar({
-  projects, empresas = [], tasks, statuses, pessoas, acesso, filtroProjetos, setFiltroProjetos, aberta,
+  projects, empresas = [], fotos = {}, tasks, statuses, pessoas, acesso, filtroProjetos, setFiltroProjetos, aberta,
   podeCriar, podeEscrever, guardar, sessaoUserId, recarregar
 }) {
   const [equipaAberta, setEquipaAberta] = useState(false);
@@ -62,7 +62,7 @@ export default function Sidebar({
 
   const linha = (p) => aEditar === p.id ? (
     <ProjetoEditor
-      key={p.id} projeto={p} empresas={empresas} guardar={guardar}
+      key={p.id} projeto={p} empresas={empresas} guardar={guardar} fotoUrl={fotos[p.foto]}
       podeEscrever={podeEscrever} podeCriar={podeCriar}
       sessaoUserId={sessaoUserId} recarregar={recarregar}
       onFechar={() => setAEditar(null)}

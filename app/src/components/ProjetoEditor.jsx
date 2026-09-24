@@ -1,6 +1,9 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { supabase } from "../lib/supabase.js";
 import { PALETA } from "../lib/format.js";
+
+const BUCKET = "pm-anexos";
+const MAX = 5 * 1024 * 1024;
 
 /**
  * Criar ou alterar um projeto, na própria barra lateral.
@@ -10,7 +13,8 @@ import { PALETA } from "../lib/format.js";
  * e isso não deve acontecer por engano num menu.
  */
 export default function ProjetoEditor({
-  projeto, empresas = [], guardar, onFechar, sessaoUserId, podeEscrever, podeCriar, recarregar
+  projeto, empresas = [], guardar, onFechar, sessaoUserId, podeEscrever, podeCriar,
+  recarregar, fotoUrl
 }) {
   const novo = !projeto;
   const [nome, setNome] = useState(projeto?.nome || "");
@@ -20,6 +24,52 @@ export default function ProjetoEditor({
   const [particular, setParticular] = useState(false);
   const [aConfirmar, setAConfirmar] = useState(false);
   const [aGuardar, setAGuardar] = useState(false);
+  const [foto, setFoto] = useState(projeto?.foto || null);
+  const [msgFoto, setMsgFoto] = useState("");
+  const [inteira, setInteira] = useState(!!projeto?.foto_inteira);
+  const ficheiro = useRef(null);
+
+  /* A foto carrega-se para o mesmo balde dos anexos, numa pasta por projeto.
+     Num projeto novo ainda não há id, por isso guarda-se o ficheiro e só se
+     carrega depois de o projeto existir. */
+  const [porCarregar, setPorCarregar] = useState(null);
+
+  async function escolherFoto(e) {
+    const f = e.target.files?.[0];
+    if (ficheiro.current) ficheiro.current.value = "";
+    if (!f) return;
+    if (!f.type.startsWith("image/")) { setMsgFoto("Escolhe uma imagem."); return; }
+    if (f.size > MAX) { setMsgFoto("A imagem não pode passar de 5 MB."); return; }
+    setMsgFoto("");
+    if (novo) { setPorCarregar(f); setFoto(URL.createObjectURL(f)); return; }
+    await carregarFoto(projeto.id, f);
+  }
+
+  async function carregarFoto(id, f) {
+    const ext = (f.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const caminho = `projetos/${id}/capa-${Date.now()}.${ext}`;
+    setMsgFoto("A carregar…");
+    const up = await supabase.storage.from(BUCKET).upload(caminho, f, { upsert: false });
+    if (up.error) { setMsgFoto(up.error.message); return null; }
+    /* Só depois de o novo estar lá em cima é que se apaga o antigo: se algo
+       correr mal a meio, fica-se com a foto velha e não sem nenhuma. */
+    const antigo = projeto?.foto;
+    await guardar(() => supabase.from("pm_projects").update({ foto: caminho }).eq("id", id));
+    if (antigo && antigo !== caminho) await supabase.storage.from(BUCKET).remove([antigo]);
+    setFoto(caminho);
+    setMsgFoto("");
+    return caminho;
+  }
+
+  async function tirarFoto() {
+    setPorCarregar(null);
+    setFoto(null);
+    setMsgFoto("");
+    if (novo || !projeto?.foto) return;
+    const antigo = projeto.foto;
+    await guardar(() => supabase.from("pm_projects").update({ foto: null }).eq("id", projeto.id));
+    await supabase.storage.from(BUCKET).remove([antigo]);
+  }
 
   async function submeter(e) {
     e.preventDefault();
@@ -38,7 +88,7 @@ export default function ProjetoEditor({
       if (!r?.ok || !r.data) { setAGuardar(false); return; }
       eid = r.data.id;
     }
-    const campos = { nome: n, empresa_id: eid, color: cor };
+    const campos = { nome: n, empresa_id: eid, color: cor, foto_inteira: inteira };
     if (novo) {
       await guardar(() =>
         supabase.from("pm_projects").insert({
@@ -88,6 +138,42 @@ export default function ProjetoEditor({
         <input className="field" value={empresaNova} autoFocus placeholder="Nome da empresa nova"
           aria-label="Nome da empresa nova" onChange={(e) => setEmpresaNova(e.target.value)} />
       )}
+
+      <div className="fotorow">
+        {foto ? (
+          <span className="fotoprev">
+            {/* Num projeto novo ainda é o ficheiro local; num já criado é o
+                endereço assinado que vem de fora. */}
+            <img src={porCarregar ? foto : (fotoUrl || "")} alt="" />
+          </span>
+        ) : (
+          <span className="fotoprev vazia" aria-hidden="true">📷</span>
+        )}
+        <span className="fotobtns">
+          <button type="button" className="btn btn-sm" onClick={() => ficheiro.current?.click()}>
+            {foto ? "Trocar foto" : "Pôr foto"}
+          </button>
+          {foto && (
+            <button type="button" className="btn btn-sm" onClick={tirarFoto}>Tirar</button>
+          )}
+          <input ref={ficheiro} type="file" accept="image/*" hidden
+            aria-label="Foto do projeto" onChange={escolherFoto} />
+        </span>
+      </div>
+      {foto && (
+        <label className="chk">
+          <input type="checkbox" checked={inteira} onChange={(e) => setInteira(e.target.checked)} />
+          mostrar a imagem inteira
+        </label>
+      )}
+      {foto && (
+        <p className="hintline">
+          {inteira
+            ? "A imagem aparece toda, com margem à volta. Para plantas, ortofotos e logótipos."
+            : "A imagem preenche a faixa e as bordas ficam cortadas. É o melhor para fotografias."}
+        </p>
+      )}
+      {msgFoto && <p className="hintline warnnote">{msgFoto}</p>}
 
       <div className="swatches">
         {PALETA.map((c) => (

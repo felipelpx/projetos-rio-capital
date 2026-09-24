@@ -8,7 +8,7 @@
  * As datas são texto ISO ou null.
  */
 
-import { parseD, toISO, addDays, dayDelta } from "./dates.js";
+import { parseD, toISO, addDays, dayDelta, shiftISO } from "./dates.js";
 
 export function depsOf(t) {
   return Array.isArray(t?.deps) ? t.deps : [];
@@ -101,6 +101,9 @@ export function cascade(rootId, tasks) {
       const patch = {
         id: x.id,
         titulo: x.titulo,
+        /* Quem a empurrou. Serve para a justificação automática que fica
+           registada: quem vir o histórico quer saber de onde veio o empurrão. */
+        empurradaPor: cur,
         inicio: toISO(addDays(st, shift)),
         fim: toISO(addDays(en, shift))
       };
@@ -127,6 +130,18 @@ export function cascade(rootId, tasks) {
  *
  * @param {string|null} onlyId limita a uma tarefa (e à cadeia a jusante)
  */
+/** De todas as antecessoras, a que está a obrigar esta tarefa a andar. */
+function mandante(x, byId) {
+  let melhor = null, quando = null;
+  for (const d of x.deps || []) {
+    const p = byId.get(d.depende_de);
+    if (!p?.fim) continue;
+    const fim = shiftISO(p.fim, (d.dias_espera || 0) + 1);
+    if (!quando || fim > quando) { quando = fim; melhor = p.id; }
+  }
+  return melhor;
+}
+
 export function resolveViolations(tasks, onlyId = null) {
   const work = tasks.map((t) => ({ ...t }));
   const byId = indexById(work);
@@ -154,6 +169,7 @@ export function resolveViolations(tasks, onlyId = null) {
       const patch = {
         id: x.id,
         titulo: x.titulo,
+        empurradaPor: mandante(x, byId),
         inicio: toISO(addDays(st, shift)),
         fim: toISO(addDays(en, shift))
       };

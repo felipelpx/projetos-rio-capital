@@ -32,6 +32,12 @@ export const PRIORIDADES = [
   { id: "urgente", label: "Urgente" }
 ];
 
+export const SETORES = [
+  { id: "comercial", label: "Comercial", color: "#A5518E" },
+  { id: "operacional", label: "Operacional", color: "#0E8798" }
+];
+export const rotuloSetor = (id) => SETORES.find((s) => s.id === id)?.label || "";
+
 export const PALETA = ["#3A72B8", "#1F8A6B", "#C07A16", "#B24A42", "#6C5AB5", "#0E8798", "#A5518E", "#5A7A2E"];
 export const PALETA_ESTADO = ["#7C8B99", "#2F86C4", "#C68A1B", "#3D9668", "#B24A42", "#6C5AB5", "#0E8798", "#A5518E"];
 
@@ -55,3 +61,29 @@ export const NIVEIS_EXPLICACAO = {
 export const podeCriarCom = (r) => r === "contrib" || r === "interact" || r === "admin";
 export const podeEscreverCom = (r) => r === "interact" || r === "admin";
 export const podeComentarCom = (r) => !!r;
+
+/* Euros à portuguesa: 12 450,00 €. Compacto (sem cêntimos) para os cartões e
+   os totais, onde o que interessa é a ordem de grandeza. */
+const EUR = new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR", useGrouping: true });
+const EUR_CURTO = new Intl.NumberFormat("pt-PT", {
+  style: "currency", currency: "EUR", maximumFractionDigits: 0, useGrouping: true
+});
+export function eur(v) {
+  if (v == null || v === "") return "";
+  const n = Number(v);
+  return Number.isFinite(n) ? EUR.format(n) : "";
+}
+export function eurCurto(v) {
+  if (v == null || v === "") return "";
+  const n = Number(v);
+  return Number.isFinite(n) ? EUR_CURTO.format(n) : "";
+}
+/* Soma dos orçamentos de um conjunto de tarefas, e quantas ainda não o têm. */
+export function somarCusto(tarefas) {
+  let total = 0, comValor = 0, porOrcar = 0;
+  for (const t of tarefas) {
+    if (t.custo_previsto != null) { total += Number(t.custo_previsto); comValor++; }
+    else if (t.tem_custo) porOrcar++;
+  }
+  return { total, comValor, porOrcar };
+}

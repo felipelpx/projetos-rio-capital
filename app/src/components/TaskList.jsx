@@ -3,12 +3,13 @@ import FiltroBar from "./FiltroBar.jsx";
 import { Avatares, Vazio } from "./Bits.jsx";
 import { fmtShort } from "../lib/dates.js";
 import { slipDays, lateDays, lateStartDays } from "../lib/schedule.js";
-import { PRIORIDADES } from "../lib/format.js";
+import { PRIORIDADES, SETORES, eurCurto } from "../lib/format.js";
 
 const COLUNAS = [
   ["titulo", "Tarefa"], ["projeto", "Projeto"], ["estado", "Estado"], ["prioridade", "Prioridade"],
+  ["setor", "Setor"],
   [null, "Responsáveis"], ["inicio", "Início"], ["fim_previsto", "Fim previsto"],
-  ["fim", "Fim real"], ["progresso", "Progresso"]
+  ["fim", "Fim real"], ["custo_previsto", "Orçamento"], ["progresso", "Progresso"]
 ];
 
 export default function TaskList({ ctx }) {
@@ -28,11 +29,22 @@ export default function TaskList({ ctx }) {
       vb = (projetoDe(b.project_id)?.nome || "zz").toLowerCase();
     }
     else if (ord.por === "estado") { va = ordemEstado(a.status_id); vb = ordemEstado(b.status_id); }
+    else if (ord.por === "setor") {
+      /* Sem setor vai para o fim, para as classificadas ficarem juntas em cima. */
+      va = SETORES.findIndex((x) => x.id === a.setor); vb = SETORES.findIndex((x) => x.id === b.setor);
+      if (va < 0) va = SETORES.length;
+      if (vb < 0) vb = SETORES.length;
+    }
     else if (ord.por === "prioridade") {
       va = PRIORIDADES.findIndex((p) => p.id === (a.prioridade || "media"));
       vb = PRIORIDADES.findIndex((p) => p.id === (b.prioridade || "media"));
     }
     else if (ord.por === "progresso") { va = a.progresso || 0; vb = b.progresso || 0; }
+    else if (ord.por === "custo_previsto") {
+      /* Sem orçamento vai para o fim, não para o princípio com valor zero. */
+      va = a.custo_previsto == null ? Infinity : Number(a.custo_previsto);
+      vb = b.custo_previsto == null ? Infinity : Number(b.custo_previsto);
+    }
     else { va = a[ord.por] || "9999-99-99"; vb = b[ord.por] || "9999-99-99"; }
     if (va < vb) return -d;
     if (va > vb) return d;
@@ -94,6 +106,13 @@ export default function TaskList({ ctx }) {
                     <td><span className="st-chip"><i style={{ background: s?.color }} />{s?.label}</span></td>
                     <td><span className={"pill p-" + prio}>{PRIORIDADES.find((x) => x.id === prio)?.label}</span></td>
                     <td>
+                      {t.setor
+                        ? <span className="setchip" data-setor={t.setor}>
+                            {SETORES.find((x) => x.id === t.setor)?.label}
+                          </span>
+                        : <span style={{ color: "var(--ink-3)" }}>—</span>}
+                    </td>
+                    <td>
                       {t.assignees.length
                         ? <Avatares ids={t.assignees} pessoas={pessoas} />
                         : <span style={{ color: "var(--ink-3)" }}>—</span>}
@@ -108,6 +127,13 @@ export default function TaskList({ ctx }) {
                       {fmtShort(t.fim) || "—"}
                       {atraso ? ` +${atraso}d` : ""}
                       {sd !== 0 && <span className={"slipnum" + (sd > 0 ? "" : " ok")}> {sd > 0 ? "+" : ""}{sd}</span>}
+                    </td>
+                    <td className="mono" style={{ fontSize: 12, textAlign: "right" }}>
+                      {t.custo_previsto != null
+                        ? eurCurto(t.custo_previsto)
+                        : t.tem_custo
+                          ? <span style={{ color: "var(--ink-3)" }} title="Tem custo, por orçamentar">€ ?</span>
+                          : <span style={{ color: "var(--ink-3)" }}>—</span>}
                     </td>
                     <td>
                       <span className="mini-prog"><i style={{ width: (t.progresso || 0) + "%" }} /></span>{" "}

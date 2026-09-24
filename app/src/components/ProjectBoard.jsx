@@ -1,10 +1,11 @@
 import Card from "./Card.jsx";
 import FiltroBar from "./FiltroBar.jsx";
 import { Vazio } from "./Bits.jsx";
+import { eurCurto, somarCusto } from "../lib/format.js";
 
 /** Quadro com uma coluna por projeto. */
 export default function ProjectBoard({ ctx, criarTarefa }) {
-  const { base, listaFiltrada, statuses, projects, pessoas, hoje,
+  const { base, listaFiltrada, statuses, projects, pessoas, hoje, fotos = {},
           contarComentarios, contarAnexos, bloqueada, onAbrir, podeCriar,
           filtroProjetos, ordemEstado } = ctx;
 
@@ -34,7 +35,29 @@ export default function ProjectBoard({ ctx, criarTarefa }) {
                 <h3>{p.nome}{p.owner_id && <span className="lock"> ●</span>}</h3>
                 <span className="ct">{col.length}</span>
               </div>
-              {p.empresa && <div className="col-sub">{p.empresa}</div>}
+              {p.foto && fotos[p.foto] && (
+                <div className={"col-foto" + (p.foto_inteira ? " inteira" : "")}>
+                  <img src={fotos[p.foto]} alt={"Foto de " + p.nome} loading="lazy" />
+                </div>
+              )}
+              {(() => {
+                /* O que interessa ver no topo da coluna é quanto está orçamentado
+                   aqui dentro, e quantas tarefas ainda não têm número. */
+                const c = somarCusto(col);
+                if (!p.empresa && !c.comValor && !c.porOrcar) return null;
+                return (
+                  <div className="col-sub">
+                    {p.empresa}
+                    {(c.comValor > 0 || c.porOrcar > 0) && (
+                      <span className="totchip">
+                        {p.empresa ? " · " : ""}
+                        {c.comValor > 0 && <b>{eurCurto(c.total)}</b>}
+                        {c.porOrcar > 0 && (c.comValor > 0 ? ` + ${c.porOrcar} por orçar` : `${c.porOrcar} por orçar`)}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
               <div className="col-list">
                 {col.map((t) => (
                   <Card

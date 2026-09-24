@@ -123,46 +123,65 @@ export function useBoard(session) {
   tarefasRef.current = estado.tasks;
 
   /** Altera uma tarefa e, se o fim foi adiado, empurra o que depende dela. */
+  /* Empurrar quem depende desta tarefa. Cada empurrão passa pela mesma função
+     de servidor que uma mudança à mão, com a justificação escrita por ela:
+     assim o histórico de uma tarefa arrastada diz de onde veio o arrasto. */
+  const empurrar = useCallback(async (mexidas) => {
+    for (const m of mexidas) {
+      const r = await supabase.rpc("pm_alterar_datas", {
+        p_task: m.id, p_inicio: m.inicio, p_fim: m.fim,
+        p_justificacao: null, p_empurrada_por: m.empurradaPor || null
+      });
+      if (r.error) return r;
+    }
+    if (mexidas.length) {
+      setAviso(
+        mexidas.length === 1
+          ? `"${mexidas[0].titulo}" foi empurrada para a frente.`
+          : `${mexidas.length} tarefas dependentes foram empurradas para a frente.`
+      );
+    }
+    return { error: null };
+  }, []);
+
+  /** Tudo o que não sejam datas nem euros: título, estado, notas, setor… */
   const patchTarefa = useCallback(async (id, patch) => {
     const antes = tarefasRef.current.find((t) => t.id === id);
     if (!antes) return { ok: false };
-    const adiou = patch.fim && (!antes.fim || patch.fim > antes.fim);
+    return guardar(() => supabase.from("pm_tasks").update(patch).eq("id", id));
+  }, [guardar]);
+
+  /* Mexer numa data que já estava marcada exige dizer porquê — a base de dados
+     recusa sem isso. Marcar a primeira data é preencher, e essa vai direta. */
+  const alterarDatas = useCallback(async (id, novas, justificacao) => {
+    const antes = tarefasRef.current.find((t) => t.id === id);
+    if (!antes) return { ok: false };
+    const inicio = novas.inicio !== undefined ? novas.inicio : antes.inicio;
+    const fim = novas.fim !== undefined ? novas.fim : antes.fim;
+    const primeira = (antes.inicio == null && antes.fim == null);
+    const adiou = fim && (!antes.fim || fim > antes.fim);
 
     return guardar(async () => {
-      const r = await supabase.from("pm_tasks").update(patch).eq("id", id);
+      const r = primeira
+        ? await supabase.from("pm_tasks").update({ inicio, fim }).eq("id", id)
+        : await supabase.rpc("pm_alterar_datas", {
+            p_task: id, p_inicio: inicio, p_fim: fim,
+            p_justificacao: justificacao, p_empurrada_por: null
+          });
       if (r.error) return r;
       if (!adiou) return r;
 
-      const depois = tarefasRef.current.map((t) => (t.id === id ? { ...t, ...patch } : t));
-      const mexidas = cascade(id, depois);
-      for (const m of mexidas) {
-        const { id: mid, titulo, ...campos } = m;
-        const rr = await supabase.from("pm_tasks").update(campos).eq("id", mid);
-        if (rr.error) return rr;
-      }
-      if (mexidas.length) {
-        setAviso(
-          mexidas.length === 1
-            ? `"${mexidas[0].titulo}" foi empurrada para a frente.`
-            : `${mexidas.length} tarefas dependentes foram empurradas para a frente.`
-        );
-      }
-      return r;
+      const depois = tarefasRef.current.map((t) => (t.id === id ? { ...t, inicio, fim } : t));
+      const err = await empurrar(cascade(id, depois));
+      return err.error ? err : r;
     });
-  }, [guardar]);
+  }, [guardar, empurrar]);
 
   /** Acerta as dependências que já estavam fora de ordem. Nunca corre sozinho. */
   const ajustarDependencias = useCallback(async (apenasId = null) => {
     const mexidas = resolveViolations(tarefasRef.current, apenasId);
     if (!mexidas.length) { setAviso("Não havia nada para ajustar."); return { ok: true }; }
-    const r = await guardar(async () => {
-      for (const m of mexidas) {
-        const { id, titulo, ...campos } = m;
-        const rr = await supabase.from("pm_tasks").update(campos).eq("id", id);
-        if (rr.error) return rr;
-      }
-      return { error: null };
-    });
+    const r = await guardar(() => empurrar(mexidas));
     if (r.ok) {
       setAviso(
         mexidas.length === 1
@@ -171,12 +190,12 @@ export function useBoard(session) {
       );
     }
     return r;
-  }, [guardar]);
+  }, [guardar, empurrar]);
 
   return {
     ...estado, erro, aviso, setAviso, setErro,
     papel, podeEscrever, podeCriar, podeComentar, souAdmin, recarregar: carregar,
-    guardar, patchTarefa, ajustarDependencias
+    guardar, patchTarefa, alterarDatas, ajustarDependencias
   };
 }
 

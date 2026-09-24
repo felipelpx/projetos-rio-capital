@@ -114,12 +114,19 @@ button{cursor:pointer}
   flex:none;display:flex;align-items:center;gap:12px;flex-wrap:wrap;
   padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--line);
 }
-.brand{display:flex;align-items:baseline;gap:9px;margin-right:2px}
+.brand{display:flex;align-items:center;gap:10px;margin-right:2px}
 .brand h1{
   font-family:"Archivo",sans-serif;font-weight:700;font-size:17px;letter-spacing:-.015em;
   margin:0;color:var(--ink);
 }
-.brand .tag{font-size:11px;color:var(--ink-3)}
+/* O logótipo faz de <h1>: altura fixa, largura pelo desenho. */
+.brandmark{margin:0;line-height:0;flex:none}
+.brandmark img{height:34px;width:auto;display:block}
+.brand .tag{font-size:11px;color:var(--ink-3);align-self:flex-end;padding-bottom:3px}
+@media (max-width:760px){
+  .brandmark img{height:28px}
+  .brand .tag{display:none}
+}
 .menu-btn{
   display:none;background:var(--surface-2);border:1px solid var(--line);
   border-radius:7px;width:34px;height:32px;line-height:1;font-size:15px;color:var(--ink-2);
@@ -332,6 +339,13 @@ input.field::placeholder{color:var(--ink-3)}
 .lock{color:var(--accent);font-size:8px;vertical-align:2px}
 .privnote{margin:0;font-size:11.5px;color:var(--ink-3);line-height:1.45;background:var(--accent-soft);border-radius:7px;padding:7px 9px}
 .chk{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-2)}
+/* Uma caixa de escolha é uma frase, não um cabeçalho: não apanha o maiúsculas
+   do .fgroup label só por também ser um <label>. */
+.fgroup label.chk{
+  font-family:inherit;font-size:12.5px;font-weight:400;letter-spacing:normal;
+  text-transform:none;color:var(--ink-2);cursor:pointer;
+}
+.fgroup label.chk input[disabled]{cursor:not-allowed}
 .chk input{accent-color:var(--accent);margin:0}
 .ordrow{display:flex;align-items:center;gap:6px}
 .ordrow .btn[disabled]{opacity:.4;cursor:not-allowed}
@@ -368,7 +382,7 @@ input.field::placeholder{color:var(--ink-3)}
 .col-list{flex:1 1 auto;min-height:0;overflow-y:auto;padding:9px;display:flex;flex-direction:column;gap:8px}
 .col-foot{flex:none;padding:0 9px 9px;min-height:9px}
 .col-sub{
-  flex:none;padding:0 12px 8px;font-size:10.5px;color:var(--ink-3);
+  flex:none;padding:8px 12px;font-size:10.5px;color:var(--ink-3);
   font-family:"Archivo",sans-serif;letter-spacing:.08em;text-transform:uppercase;
   border-bottom:1px solid var(--line);margin-top:-1px;
 }
@@ -413,6 +427,56 @@ input.field::placeholder{color:var(--ink-3)}
 .pill.startpill{color:var(--crit);border-style:dashed}
 .datechip{font-size:11px;color:var(--ink-3);font-family:"IBM Plex Mono",monospace}
 .datechip.late{color:var(--crit);font-weight:500}
+.eurchip{
+  font-size:10.5px;font-family:"IBM Plex Mono",monospace;font-weight:500;
+  color:var(--ink-2);background:var(--surface-3);border-radius:5px;padding:1px 5px;
+  white-space:nowrap;
+}
+.eurchip.open{color:var(--ink-3);font-weight:400}
+.setchip{
+  display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-2);
+  white-space:nowrap;
+}
+.setchip::before{content:"";width:7px;height:7px;border-radius:2px;background:var(--ink-3)}
+.setchip[data-setor="comercial"]::before{background:#A5518E}
+.setchip[data-setor="operacional"]::before{background:#0E8798}
+
+/* A foto do projeto: um quadrinho por baixo do nome, na vista por projetos.
+   Altura fixa e object-fit para que fotos de formatos diferentes não façam as
+   colunas ficar todas desalinhadas. */
+/* Faixa no topo da coluna, logo debaixo do título: é o que dá a reconhecer a
+   obra de relance. Vai de bordo a bordo, com a altura fixa para as colunas
+   ficarem todas alinhadas venham as fotos no formato que vierem. */
+.col-foto{
+  flex:none;line-height:0;background:var(--surface-3);
+  border-bottom:1px solid var(--line);margin-top:-1px;
+}
+.col-foto img{width:100%;height:142px;object-fit:cover;display:block}
+/* Plantas, ortofotos e logótipos perdem o sentido cortados: aparecem inteiros,
+   com margem. Escolhe-se por projeto, no editor. */
+.col-foto.inteira{background:var(--surface)}
+.col-foto.inteira img{object-fit:contain;padding:6px;box-sizing:border-box}
+
+.fotorow{display:flex;align-items:center;gap:9px}
+.fotoprev{
+  flex:none;width:52px;height:40px;border-radius:7px;overflow:hidden;
+  background:var(--surface-3);border:1px solid var(--line);
+  display:grid;place-items:center;font-size:15px;color:var(--ink-3);
+}
+.fotoprev img{width:100%;height:100%;object-fit:cover;display:block}
+.fotobtns{display:flex;gap:6px;flex-wrap:wrap}
+
+.multi-row .so{
+  flex:none;opacity:0;font-size:10.5px;color:var(--accent);cursor:pointer;
+  text-decoration:underline;text-underline-offset:2px;
+}
+.multi-row:hover .so{opacity:1}
+.orcval{
+  margin:2px 0 0;font-family:"IBM Plex Mono",monospace;font-size:17px;
+  font-weight:500;color:var(--ink);letter-spacing:-.01em;
+}
+.totchip{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-3);white-space:nowrap}
+.totchip b{font-weight:500;color:var(--ink-2)}
 .avs{display:flex;margin-left:auto}
 .avs .avatar{margin-left:-5px;border:1.5px solid var(--surface)}
 .avs .avatar:first-child{margin-left:0}
@@ -455,7 +519,11 @@ input.field::placeholder{color:var(--ink-3)}
 .glayer{position:absolute;top:0;bottom:0;left:var(--namew);width:var(--trackw);z-index:0;pointer-events:none}
 .gband{position:absolute;top:0;bottom:0;background:var(--band)}
 .gmonthline{position:absolute;top:0;bottom:0;width:1px;background:var(--line-strong)}
-.gtoday{position:absolute;top:0;bottom:0;width:2px;background:var(--crit);opacity:.65}
+.gtoday{
+  position:absolute;top:0;bottom:0;pointer-events:none;
+  background:color-mix(in srgb, var(--crit) 9%, transparent);
+  border-left:2px solid var(--crit);
+}
 
 .grow{display:flex;position:relative;z-index:1;height:34px;border-bottom:1px solid var(--grid)}
 .grow:hover .gname{background:var(--surface-2)}
@@ -695,6 +763,7 @@ tr.done .tname{color:var(--ink-3);text-decoration:line-through;text-decoration-t
 .fgroup label{font-family:"Archivo",sans-serif;font-size:10px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3)}
 .fgroup .field{width:100%}
 .frow{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.frow.tres{grid-template-columns:1fr 1fr 1fr}
 textarea.field{resize:vertical;min-height:88px;line-height:1.5}
 #d-title{font-size:15.5px;font-weight:500;padding:9px 10px}
 .chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}

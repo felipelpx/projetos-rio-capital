@@ -50,6 +50,10 @@ export default function MultiSelect({ rotuloTudo, plural, itens, valor, onChange
               <input type="checkbox" checked={marcado(i.id)} onChange={() => alternar(i.id)} />
               {i.color ? <i style={{ background: i.color }} /> : <i className="ghosti" />}
               <span className="nm">{i.nome}</span>
+              {/* "Ver só este" numa carga em vez de desmarcar os outros um a um,
+                  que é o que se quer quase sempre quando se abre isto. */}
+              <span className="so" role="button" title={"Ver só " + i.nome}
+                onClick={(e) => { e.preventDefault(); onChange([i.id]); }}>só</span>
               <span className="ct">{i.n}</span>
             </label>
           ))}

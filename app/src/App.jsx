@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase, configurado } from "./lib/supabase.js";
 import { useBoard } from "./data/useBoard.js";
-import { today } from "./lib/dates.js";
-import { PRIORIDADES } from "./lib/format.js";
+import { useHoje } from "./lib/useHoje.js";
+import { useFotos } from "./data/useFotos.js";
+import { PRIORIDADES, SETORES } from "./lib/format.js";
 import Auth from "./components/Auth.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import Board from "./components/Board.jsx";
@@ -65,18 +66,19 @@ function Quadro({ session }) {
     projects, empresas, statuses, tasks, comments, attachments, pessoas,
     carregado, erro, aviso, setAviso, setErro,
     podeEscrever, podeCriar, podeComentar, souAdmin,
-    patchTarefa, guardar, recarregar, ajustarDependencias, acesso
+    patchTarefa, alterarDatas, guardar, recarregar, ajustarDependencias, acesso
   } = dados;
 
   const [vista, setVista] = useState(() => localStorage.getItem("pm:vista") || "quadro");
   const [filtroProjetos, setFiltroProjetos] = useState(null);
-  const [filtros, setFiltros] = useState({ estados: null, prioridades: null, pessoas: null });
+  const [filtros, setFiltros] = useState({ estados: null, prioridades: null, setores: null, pessoas: null });
   const [abertoMulti, setAbertoMulti] = useState(null);
   const [aberta, setAberta] = useState(null);
   const [procura, setProcura] = useState("");
   const [menuLateral, setMenuLateral] = useState(false);
 
-  const hoje = useMemo(() => today(), []);
+  const hoje = useHoje();
+  const fotos = useFotos(projects);
 
   const mudarVista = (v) => { setVista(v); localStorage.setItem("pm:vista", v); };
 
@@ -105,9 +107,10 @@ function Quadro({ session }) {
   const listaFiltrada = useMemo(
     () => base.filter((t) =>
       (!filtros.estados || filtros.estados.includes(t.status_id)) &&
-      (!filtros.prioridades || filtros.prioridades.includes(t.prioridade || "media"))
+      (!filtros.prioridades || filtros.prioridades.includes(t.prioridade || "media")) &&
+      (!filtros.setores || filtros.setores.includes(t.setor || "__sem__"))
     ),
-    [base, filtros.estados, filtros.prioridades]
+    [base, filtros.estados, filtros.prioridades, filtros.setores]
   );
 
   const contarComentarios = useCallback(
@@ -130,6 +133,14 @@ function Quadro({ session }) {
   const itensPrioridade = useMemo(() => [...PRIORIDADES].reverse().map((p) => ({
     id: p.id, nome: p.label, n: base.filter((t) => (t.prioridade || "media") === p.id).length
   })), [base]);
+
+  const itensSetor = useMemo(() => [
+    ...SETORES.map((x) => ({
+      id: x.id, nome: x.label, color: x.color,
+      n: base.filter((t) => t.setor === x.id).length
+    })),
+    { id: "__sem__", nome: "Sem setor", n: base.filter((t) => !t.setor).length }
+  ], [base]);
 
   const itensPessoa = useMemo(() => [
     ...pessoas.map((p) => ({
@@ -165,9 +176,9 @@ function Quadro({ session }) {
     base, listaFiltrada, tasks, statuses, projects, pessoas, comments, attachments,
     hoje, podeEscrever, podeCriar, podeComentar, souAdmin,
     filtros, setFiltros, abertoMulti, setAbertoMulti,
-    filtroProjetos, itensEstado, itensPrioridade, itensPessoa,
+    filtroProjetos, itensEstado, itensPrioridade, itensSetor, itensPessoa, fotos,
     contarComentarios, contarAnexos, ordemEstado, bloqueada,
-    onAbrir: setAberta, patchTarefa, guardar, recarregar,
+    onAbrir: setAberta, patchTarefa, alterarDatas, guardar, recarregar,
     sessaoUserId: session.user.id
   };
 
@@ -195,7 +206,14 @@ function Quadro({ session }) {
       <header className="topbar">
         <button className="menu-btn" aria-label="Projetos e equipa" onClick={() => setMenuLateral(!menuLateral)}>☰</button>
         <div className="brand">
-          <h1>Rio Capital</h1>
+          <h1 className="brandmark">
+            {/* O logótipo faz de título: o nome está lá dentro. A versão clara
+                entra sozinha em modo escuro, senão o azul-escuro desaparecia. */}
+            <picture>
+              <source srcSet="/logo-claro.png" media="(prefers-color-scheme: dark)" />
+              <img src="/logo.png" alt="Rio Capital" width="391" height="174" />
+            </picture>
+          </h1>
           <span className="tag">gestão de projetos</span>
         </div>
         <div className="seg" role="group" aria-label="Vista">
@@ -235,7 +253,7 @@ function Quadro({ session }) {
 
       <div className="main">
         <Sidebar
-          projects={projects} empresas={empresas} tasks={tasks} statuses={statuses} pessoas={pessoas}
+          projects={projects} empresas={empresas} fotos={fotos} tasks={tasks} statuses={statuses} pessoas={pessoas}
           acesso={acesso} filtroProjetos={filtroProjetos} setFiltroProjetos={setFiltroProjetos}
           aberta={menuLateral} podeCriar={podeCriar} podeEscrever={podeEscrever}
           guardar={guardar} sessaoUserId={session.user.id} recarregar={recarregar}

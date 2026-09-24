@@ -181,3 +181,31 @@ test("ciclos são travados na criação da dependência", () => {
   assert.equal(wouldCycle("a", "a", tasks), true);
   assert.equal(wouldCycle("c", "a", tasks), false);
 });
+
+test("a cascata diz quem empurrou cada tarefa", () => {
+  const tasks = [
+    { id: "a", titulo: "Fundações", inicio: "2026-01-01", fim: "2026-01-10", deps: [] },
+    { id: "b", titulo: "Estrutura", inicio: "2026-01-11", fim: "2026-01-20",
+      deps: [{ depende_de: "a", dias_espera: 0 }] },
+    { id: "c", titulo: "Cobertura", inicio: "2026-01-21", fim: "2026-01-25",
+      deps: [{ depende_de: "b", dias_espera: 0 }] }
+  ];
+  tasks[0].fim = "2026-01-15";
+  const mexidas = cascade("a", tasks);
+  const porId = Object.fromEntries(mexidas.map((m) => [m.id, m]));
+  assert.equal(porId.b.empurradaPor, "a");
+  assert.equal(porId.c.empurradaPor, "b", "o empurrão de c vem de b, não de a");
+});
+
+test("ao acertar violações antigas, a antecessora apontada é a que manda", () => {
+  const tasks = [
+    { id: "a", titulo: "Licença", inicio: "2026-03-01", fim: "2026-03-05", deps: [] },
+    { id: "b", titulo: "Betão", inicio: "2026-03-01", fim: "2026-03-20", deps: [] },
+    { id: "c", titulo: "Acabamentos", inicio: "2026-03-02", fim: "2026-03-10",
+      deps: [{ depende_de: "a", dias_espera: 0 }, { depende_de: "b", dias_espera: 0 }] }
+  ];
+  const mexidas = resolveViolations(tasks);
+  const c = mexidas.find((m) => m.id === "c");
+  assert.equal(c.empurradaPor, "b", "b acaba mais tarde, é b quem obriga c a andar");
+  assert.equal(c.inicio, "2026-03-21");
+});

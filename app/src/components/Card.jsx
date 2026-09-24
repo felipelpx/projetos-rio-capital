@@ -1,5 +1,5 @@
 import { Avatares } from "./Bits.jsx";
-import { PRIORIDADES } from "../lib/format.js";
+import { PRIORIDADES, eurCurto } from "../lib/format.js";
 import { fmtShort } from "../lib/dates.js";
 import { lateDays, lateStartDays } from "../lib/schedule.js";
 
@@ -38,6 +38,13 @@ export default function Card({ t, projeto, estado, pessoas, porProjeto, hoje, nC
               {fmtShort(t.fim)}{atraso ? ` +${atraso}d` : ""}
             </span>
           )}
+          {t.custo_previsto != null ? (
+            <span className="eurchip" title={"Orçamento previsto: " + t.custo_previsto + " €"}>
+              {eurCurto(t.custo_previsto)}
+            </span>
+          ) : t.tem_custo ? (
+            <span className="eurchip open" title="Tem custo, ainda por orçamentar">€ ?</span>
+          ) : null}
           {nAnexos > 0 && <span className="clip" title="Anexos">📎{nAnexos}</span>}
           {nComentarios > 0 && <span className="cmclip" title="Comentários">💬{nComentarios}</span>}
           {atrasoInicio > 0 && (

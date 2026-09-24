@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase, msgErro } from "../lib/supabase.js";
 import { Avatar } from "./Bits.jsx";
 import { fmtShort, dias } from "../lib/dates.js";
-import { fmtSize, fmtWhen, PRIORIDADES } from "../lib/format.js";
+import { fmtSize, fmtWhen, PRIORIDADES, SETORES, eur } from "../lib/format.js";
 import { slipDays, earliestStart, depViolated, wouldCycle } from "../lib/schedule.js";
 
 const BUCKET = "pm-anexos";
@@ -29,7 +29,7 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
     podeEscrever,   // datas, dependências, apagar — editor e super admin
     podeCriar,      // criar e alterar tarefas — editor parcial para cima
     podeComentar,   // toda a gente com acesso, incluindo o visualizador
-    souAdmin, patchTarefa, guardar, recarregar, sessaoUserId, hoje
+    souAdmin, patchTarefa, alterarDatas, guardar, recarregar, sessaoUserId, hoje
   } = ctx;
 
   const t = tasks.find((x) => x.id === tarefaId);
@@ -40,12 +40,21 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
   const [porque, setPorque] = useState("");
   const [erroRebase, setErroRebase] = useState(false);
   const [msgAnexo, setMsgAnexo] = useState("");
+  const [mudarData, setMudarData] = useState(null);   // { campo, valor }
+  const [dataPorque, setDataPorque] = useState("");
+  const [erroData, setErroData] = useState("");
+  const [mudarOrc, setMudarOrc] = useState(false);
+  const [orcNovo, setOrcNovo] = useState("");
+  const [orcPorque, setOrcPorque] = useState("");
+  const [erroOrc, setErroOrc] = useState("");
   const [comentario, setComentario] = useState("");
   const ficheiro = useRef(null);
 
   useEffect(() => {
     setPicker(false); setDepPicker(false); setRebase(false);
     setPorque(""); setErroRebase(false); setMsgAnexo(""); setComentario("");
+    setMudarOrc(false); setOrcNovo(""); setOrcPorque(""); setErroOrc("");
+    setMudarData(null); setDataPorque(""); setErroData("");
   }, [tarefaId]);
 
   useEffect(() => {
@@ -71,16 +80,36 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
   const cedo = earliestStart(t, tasks);
   const arrancaCedoDemais = t.deps.some((d) => depViolated(t, d, tasks));
   const reposicoes = meusComentarios.filter((c) => c.tipo === "replaneamento").length;
+  const mexidasOrc = meusComentarios.filter((c) => c.tipo === "orcamento").length;
+  const temOrcamento = t.custo_previsto != null;
 
   const patch = (campos) => patchTarefa(t.id, campos);
 
-  async function mudarDatas(campo, valor) {
-    const p = { [campo]: valor || null };
-    if (campo === "inicio" && valor && t.fim && t.fim < valor) p.fim = valor;
-    if (campo === "fim" && valor && t.inicio && t.inicio > valor) p.inicio = valor;
-    /* A linha de base grava-se na primeira vez que há fim, e nunca mais muda. */
-    if (campo === "fim" && valor && !t.fim_previsto) p.fim_previsto = valor;
-    await patch(p);
+  /* Marcar a primeira data é preencher: vai direto. Mexer numa que já lá
+     estava muda o plano de toda a gente, e aí pergunta-se porquê antes de
+     gravar — é o que fica no histórico quando alguém quiser perceber a
+     derrapagem daqui a seis meses. */
+  const primeiraData = t.inicio == null && t.fim == null;
+
+  function novasDatas(campo, valor) {
+    const d = { inicio: t.inicio, fim: t.fim, [campo]: valor || null };
+    if (campo === "inicio" && valor && d.fim && d.fim < valor) d.fim = valor;
+    if (campo === "fim" && valor && d.inicio && d.inicio > valor) d.inicio = valor;
+    return d;
+  }
+
+  async function pedirData(campo, valor) {
+    if (primeiraData) { await alterarDatas(t.id, novasDatas(campo, valor), null); return; }
+    setMudarData({ campo, valor });
+    setDataPorque("");
+    setErroData("");
+  }
+
+  async function confirmarData() {
+    const j = dataPorque.trim();
+    if (!j) { setErroData("Escreve a justificação — fica registada nos comentários."); return; }
+    const r = await alterarDatas(t.id, novasDatas(mudarData.campo, mudarData.valor), j);
+    if (r?.ok) { setMudarData(null); setDataPorque(""); setErroData(""); }
   }
 
   async function reporPrevisto() {
@@ -88,6 +117,29 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
     if (!j) { setErroRebase(true); return; }
     await guardar(() => supabase.rpc("pm_repor_fim_previsto", { p_task: t.id, p_justificacao: j }));
     setRebase(false); setPorque(""); setErroRebase(false);
+  }
+
+  /* Número escrito à portuguesa ou à inglesa: 1.250,50 e 1250.50 dão o mesmo. */
+  function lerValor(txt) {
+    const limpo = String(txt).trim().replace(/[\s\u00A0€]/g, "");
+    if (!limpo) return null;
+    const n = Number(limpo.replace(/\.(?=\d{3}\b)/g, "").replace(",", "."));
+    return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : NaN;
+  }
+
+  /* Todo o euro que se escreve passa pela mesma função, e leva justificação —
+     tanto o primeiro orçamento como as alterações. A base de dados recusa
+     qualquer escrita directa, por isso não há caminho que a salte. */
+  async function gravarOrcamento() {
+    const j = orcPorque.trim();
+    const v = lerValor(orcNovo);
+    if (Number.isNaN(v)) { setErroOrc("Escreve um número, por exemplo 12 450."); return; }
+    if (v == null && !temOrcamento) { setErroOrc("Escreve o valor."); return; }
+    if (!j) { setErroOrc("Escreve a justificação — fica registada nos comentários."); return; }
+    const r = await guardar(() => supabase.rpc("pm_definir_orcamento", {
+      p_task: t.id, p_valor: v, p_justificacao: j
+    }));
+    if (r?.ok) { setMudarOrc(false); setOrcNovo(""); setOrcPorque(""); setErroOrc(""); }
   }
 
   async function juntarDependencia(id) {
@@ -199,12 +251,20 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
             </div>
           </div>
 
-          <div className="frow">
+          <div className="frow tres">
             <div className="fgroup">
               <label htmlFor="d-prio">Prioridade</label>
               <select className="field" id="d-prio" value={t.prioridade || "media"} disabled={!podeCriar}
                 onChange={(e) => patch({ prioridade: e.target.value })}>
                 {PRIORIDADES.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+              </select>
+            </div>
+            <div className="fgroup">
+              <label htmlFor="d-setor">Setor</label>
+              <select className="field" id="d-setor" value={t.setor || ""} disabled={!podeCriar}
+                onChange={(e) => patch({ setor: e.target.value || null })}>
+                <option value="">Sem setor</option>
+                {SETORES.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
               </select>
             </div>
             <div className="fgroup">
@@ -221,16 +281,18 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
           <div className="frow">
             <div className="fgroup">
               <label htmlFor="d-inicio">Início</label>
-              <input className="field" id="d-inicio" type="date" value={t.inicio || ""} disabled={!podeEscrever}
-                onChange={(e) => mudarDatas("inicio", e.target.value)} />
+              <input className="field" id="d-inicio" type="date" disabled={!podeEscrever}
+                value={mudarData?.campo === "inicio" ? mudarData.valor : (t.inicio || "")}
+                onChange={(e) => pedirData("inicio", e.target.value)} />
               {podeCriar && !podeEscrever && (
                 <span className="co-note">O teu acesso não permite alterar datas.</span>
               )}
             </div>
             <div className="fgroup">
               <label htmlFor="d-fim">Fim (real)</label>
-              <input className="field" id="d-fim" type="date" value={t.fim || ""} disabled={!podeEscrever}
-                onChange={(e) => mudarDatas("fim", e.target.value)} />
+              <input className="field" id="d-fim" type="date" disabled={!podeEscrever}
+                value={mudarData?.campo === "fim" ? mudarData.valor : (t.fim || "")}
+                onChange={(e) => pedirData("fim", e.target.value)} />
 
               <span className={"co-note" + (sd > 0 ? " warnnote" : sd < 0 ? " oknote" : "")}>
                 {!t.fim_previsto
@@ -272,6 +334,102 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
                 </div>
               )}
             </div>
+          </div>
+
+          {mudarData && (
+            <div className="rebaseform">
+              <p className="hintline">
+                {mudarData.campo === "inicio" ? "Início" : "Fim"}:{" "}
+                {fmtShort(mudarData.campo === "inicio" ? t.inicio : t.fim) || "sem data"} →{" "}
+                {fmtShort(mudarData.valor) || "sem data"}. Fica registado nos comentários, com o
+                teu nome. As tarefas que dependem desta são empurradas, se for preciso.
+              </p>
+              <textarea className="field" rows="2" value={dataPorque} aria-label="Justificação da data"
+                placeholder="Porque é que a data mudou? (obrigatório)"
+                onChange={(e) => { setDataPorque(e.target.value); setErroData(""); }} />
+              {erroData && <p className="hintline warnnote">{erroData}</p>}
+              <div className="row-end">
+                <button className="btn btn-sm" onClick={() => { setMudarData(null); setErroData(""); }}>
+                  Cancelar
+                </button>
+                <button className="btn btn-sm btn-primary" onClick={confirmarData}>
+                  Gravar e registar
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Custo. Todo o valor em euros é gravado pela função do servidor, que
+              obriga a justificar — o primeiro orçamento e cada alteração. Quem
+              altera um que já está gravado tem de ser super admin. A base de
+              dados recusa na mesma se alguém contornar o ecrã. */}
+          <div className="fgroup">
+            <label>Custo</label>
+            <label className="chk">
+              <input type="checkbox" checked={!!t.tem_custo}
+                disabled={!podeEscrever || temOrcamento}
+                onChange={(e) => patch({ tem_custo: e.target.checked })} />
+              Esta tarefa tem custo
+            </label>
+
+            {t.tem_custo && (
+              mudarOrc ? (
+                <div className="rebaseform">
+                  <p className="hintline">
+                    {temOrcamento
+                      ? <>Orçamento atual: {eur(t.custo_previsto)}. O valor antigo fica registado nos
+                          comentários, com quem o mudou e porquê. Deixa em branco para o retirar.</>
+                      : <>O valor e a razão ficam registados nos comentários, com o teu nome.
+                          Depois de gravado, só um super admin o altera.</>}
+                  </p>
+                  <input className="field" value={orcNovo} inputMode="decimal"
+                    aria-label={temOrcamento ? "Novo orçamento" : "Orçamento previsto"}
+                    placeholder={temOrcamento ? "Novo valor, em euros" : "Orçamento previsto, em euros"}
+                    onChange={(e) => { setOrcNovo(e.target.value); setErroOrc(""); }} />
+                  <textarea className="field" rows="2" value={orcPorque} aria-label="Justificação do orçamento"
+                    placeholder={temOrcamento
+                      ? "Porque é que o orçamento mudou? (obrigatório)"
+                      : "Em que se baseia este orçamento? (obrigatório)"}
+                    onChange={(e) => { setOrcPorque(e.target.value); setErroOrc(""); }} />
+                  {erroOrc && <p className="hintline warnnote">{erroOrc}</p>}
+                  <div className="row-end">
+                    <button className="btn btn-sm" onClick={() => {
+                      setMudarOrc(false); setOrcPorque(""); setErroOrc("");
+                    }}>Cancelar</button>
+                    <button className="btn btn-sm btn-primary" onClick={gravarOrcamento}>
+                      Gravar e registar
+                    </button>
+                  </div>
+                </div>
+              ) : temOrcamento ? (
+                <>
+                  <p className="orcval">{eur(t.custo_previsto)}</p>
+                  <span className="co-note">
+                    Orçamento previsto.
+                    {mexidasOrc > 0 && <span className="rebadge"> alterado {mexidasOrc}×</span>}
+                  </span>
+                  {souAdmin ? (
+                    <button className="linkbtn" onClick={() => {
+                      setMudarOrc(true); setOrcNovo(String(t.custo_previsto)); setErroOrc("");
+                    }}>Alterar orçamento</button>
+                  ) : podeEscrever ? (
+                    <span className="co-note">
+                      Só um super admin pode alterar um orçamento já gravado, com justificação.
+                    </span>
+                  ) : null}
+                </>
+              ) : podeEscrever ? (
+                <button className="linkbtn" onClick={() => {
+                  setMudarOrc(true); setOrcNovo(""); setOrcPorque(""); setErroOrc("");
+                }}>Gravar orçamento</button>
+              ) : (
+                <span className="co-note">Tem custo, ainda por orçamentar.</span>
+              )
+            )}
+
+            {!t.tem_custo && podeCriar && !podeEscrever && (
+              <span className="co-note">O teu acesso não permite definir custos.</span>
+            )}
           </div>
 
           <div className="fgroup">
@@ -449,6 +607,46 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
                 {meusComentarios.map((c) => {
                   const autor = pessoas.find((p) => p.id === c.autor_id);
                   const nome = autor?.nome || "Alguém";
+                  if (c.tipo === "datas") {
+                    return (
+                      <div className="cm log" key={c.id}>
+                        <span className="cm-av" style={{ background: autor?.color || "#7C8B99" }}>
+                          {nome.slice(0, 1).toUpperCase()}
+                        </span>
+                        <div className="cm-main">
+                          <div className="cm-head">
+                            <span className="cm-tag">{c.campo === "inicio" ? "Início" : "Fim"}</span>
+                            <span className="cm-who">{nome}</span>
+                            <span className="cm-when">{fmtWhen(c.criado_em)}</span>
+                          </div>
+                          <p className="cm-move">
+                            {fmtShort(c.de_data) || "sem data"} → {fmtShort(c.para_data) || "sem data"}
+                          </p>
+                          <p className="cm-text">{c.texto}</p>
+                        </div>
+                      </div>
+                    );
+                  }
+                  if (c.tipo === "orcamento") {
+                    return (
+                      <div className="cm log" key={c.id}>
+                        <span className="cm-av" style={{ background: autor?.color || "#7C8B99" }}>
+                          {nome.slice(0, 1).toUpperCase()}
+                        </span>
+                        <div className="cm-main">
+                          <div className="cm-head">
+                            <span className="cm-tag">Orçamento</span>
+                            <span className="cm-who">{nome}</span>
+                            <span className="cm-when">{fmtWhen(c.criado_em)}</span>
+                          </div>
+                          <p className="cm-move">
+                            {eur(c.de_valor)} → {c.para_valor == null ? "sem orçamento" : eur(c.para_valor)}
+                          </p>
+                          <p className="cm-text">{c.texto}</p>
+                        </div>
+                      </div>
+                    );
+                  }
                   if (c.tipo === "replaneamento") {
                     return (
                       <div className="cm log" key={c.id}>

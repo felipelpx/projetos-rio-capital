@@ -40,16 +40,16 @@ Está todo em `01_schema.sql`, com as políticas. Em resumo:
 |---|---|
 | `app_access` | que áreas (`erp` / `projetos`) e que papel cada pessoa tem: `admin` = Super admin, `interact` = Editor, `contrib` = Editor parcial, `view` = Visualizador |
 | `pm_empresas` | empresa; `nome` (único, sem distinguir maiúsculas), `arquivada`. Não se apaga |
-| `pm_projects` | projeto; `empresa_id` → `pm_empresas` (→ por decidir: ligar `pm_empresas` às sociedades do ERP), `empresa` (espelho do nome), `arquivado`, `owner_id` |
+| `pm_projects` | projeto; `foto` (caminho no balde `pm-anexos`), `empresa_id` → `pm_empresas` (→ por decidir: ligar `pm_empresas` às sociedades do ERP), `empresa` (espelho do nome), `arquivado`, `owner_id` |
 | `pm_statuses` | as colunas do quadro, configuráveis pelo utilizador |
-| `pm_tasks` | tarefa; `fim` (real) e `fim_previsto` (linha de base imutável) |
+| `pm_tasks` | tarefa; `fim` (real) e `fim_previsto` (linha de base imutável); `tem_custo` e `custo_previsto` (orçamento, euros); `setor` (`comercial`/`operacional`, ou vazio) |
 | `pm_task_assignees` | responsáveis → utilizadores |
 | `pm_task_deps` | dependências fim-a-início, com `dias_espera` (espera entre o fim da antecessora e o arranque) |
-| `pm_comments` | comentários e registos de replaneamento |
+| `pm_comments` | comentários e registos: `datas` (com `campo`, `de_data`/`para_data`), `replaneamento` (linha de base), `orcamento` (`de_valor`/`para_valor`) |
 | `pm_attachments` | ficheiros (Storage) e links |
 | `pm_subscriptions` | quem quer o resumo diário e com que âmbito |
 
-Cinco invariantes que não se devem perder:
+Sete invariantes que não se devem perder:
 
 1. **`fim_previsto` grava-se uma vez e nunca mais muda.** Há um trigger a garantir.
    Só a função `pm_repor_fim_previsto(task, justificacao)` a altera, e essa exige
@@ -70,7 +70,19 @@ Cinco invariantes que não se devem perder:
    `pm_guardar_datas` recusa alterações de datas a quem não tem escrita
    completa. O ecrã limita-se a não mostrar botões que iam falhar.
 4. **Adiar o fim de uma tarefa empurra as dependentes.** Ver a secção 3.6.
-5. **`pm_projects.empresa` é um espelho, não um campo.** Quem manda é o
+5. **Nenhuma data nem euro se altera sem justificação.** Preencher pela
+   primeira vez vai direto; alterar passa por `pm_alterar_datas(task, inicio,
+   fim, justificacao)` ou `pm_definir_orcamento(task, valor, justificacao)`.
+   Os gatilhos `pm_guardar_datas` e `pm_guardar_custo` recusam qualquer escrita
+   directa nessas colunas, por isso não há caminho que salte o registo. A
+   cascata usa a mesma função com `p_empurrada_por`, que só é aceite se a
+   tarefa indicada for mesmo uma antecessora, e gera a justificação sozinha.
+6. **`custo_previsto` grava-se uma vez, como `fim_previsto`.** Quem tem escrita
+   completa põe-no onde não havia; a partir daí o gatilho `pm_guardar_custo`
+   recusa qualquer alteração, e só `pm_definir_orcamento(task, valor,
+   justificacao)` a faz — super admin, justificação obrigatória, registo em
+   `pm_comments` com o valor antigo e o novo. Passar `null` retira o orçamento.
+7. **`pm_projects.empresa` é um espelho, não um campo.** Quem manda é o
    `empresa_id`; o texto é mantido por dois gatilhos (`pm_projects_empresa`
    ao escrever o projeto, `pm_empresas_renomear` ao renomear a empresa). Existe
    para que tudo o que já lia `.empresa` continue a ler, e para que renomear uma

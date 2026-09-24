@@ -1,11 +1,12 @@
 import MultiSelect from "./MultiSelect.jsx";
+import { eurCurto, somarCusto } from "../lib/format.js";
 
 /** A mesma barra de filtros na Lista e no quadro por projeto. */
 export default function FiltroBar({ ctx, prefixo }) {
   const { base, listaFiltrada, filtros, setFiltros, abertoMulti, setAbertoMulti,
-          itensEstado, itensPrioridade, itensPessoa } = ctx;
+          itensEstado, itensPrioridade, itensSetor, itensPessoa } = ctx;
 
-  const ativo = filtros.estados != null || filtros.prioridades != null;
+  const ativo = filtros.estados != null || filtros.prioridades != null || filtros.setores != null;
   const algum = ativo || filtros.pessoas != null;
 
   return (
@@ -22,17 +23,33 @@ export default function FiltroBar({ ctx, prefixo }) {
         aberto={abertoMulti === prefixo + "-prio"} onAbrir={(a) => setAbertoMulti(a ? prefixo + "-prio" : null)}
       />
       <MultiSelect
+        rotuloTudo="Todos os setores" plural="setores" itens={itensSetor}
+        valor={filtros.setores} onChange={(v) => setFiltros({ ...filtros, setores: v })}
+        aberto={abertoMulti === prefixo + "-set"} onAbrir={(a) => setAbertoMulti(a ? prefixo + "-set" : null)}
+      />
+      <MultiSelect
         rotuloTudo="Todos os colaboradores" plural="colaboradores" itens={itensPessoa}
         valor={filtros.pessoas} onChange={(v) => setFiltros({ ...filtros, pessoas: v })}
         aberto={abertoMulti === prefixo + "-pes"} onAbrir={(a) => setAbertoMulti(a ? prefixo + "-pes" : null)}
       />
       {algum && (
         <button className="btn btn-sm"
-          onClick={() => setFiltros({ estados: null, prioridades: null, pessoas: null })}>
+          onClick={() => setFiltros({ estados: null, prioridades: null, setores: null, pessoas: null })}>
           Limpar
         </button>
       )}
       <span className="spacer" />
+      {(() => {
+        /* Soma o que está à frente dos olhos: muda com os filtros, de propósito. */
+        const c = somarCusto(listaFiltrada);
+        if (!c.comValor && !c.porOrcar) return null;
+        return (
+          <span className="totchip" title="Soma dos orçamentos das tarefas visíveis">
+            {c.comValor > 0 && <b>{eurCurto(c.total)}</b>}
+            {c.porOrcar > 0 && (c.comValor > 0 ? ` + ${c.porOrcar} por orçar` : `${c.porOrcar} por orçar`)}
+          </span>
+        );
+      })()}
       <span className="eyebrow">
         {ativo
           ? `${listaFiltrada.length} de ${base.length} ${base.length === 1 ? "tarefa" : "tarefas"}`

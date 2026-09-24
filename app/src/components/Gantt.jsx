@@ -297,7 +297,11 @@ export default function Gantt({ ctx, onAjustar }) {
             <div className="glayer">
               {faixas.map((f, i) => <div className="gband" key={i} style={{ left: f.x, width: f.w }} />)}
               {linhasMes.map((x, i) => <div className="gmonthline" key={i} style={{ left: x }} />)}
-              {todayX >= 0 && todayX <= trackW && <div className="gtoday" style={{ left: todayX }} />}
+              {/* O dia inteiro, não uma linha na fronteira entre dois dias:
+                  assim não há dúvida sobre qual deles é hoje. */}
+              {todayX >= 0 && todayX <= trackW && (
+                <div className="gtoday" style={{ left: todayX, width: Math.max(2, dayW) }} />
+              )}
             </div>
 
             {linhas.map((l, i) =>
