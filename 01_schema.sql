@@ -468,22 +468,9 @@ create table if not exists public.pm_comments (
 alter table public.pm_comments add column if not exists campo      text;  -- 'inicio' | 'fim', nos registos de datas
 alter table public.pm_comments add column if not exists de_valor   numeric(12,2);
 alter table public.pm_comments add column if not exists para_valor numeric(12,2);
--- O tipo 'orcamento' não existia na primeira versão; `create table if not
--- exists` não mexe numa tabela que já lá está, por isso a restrição troca-se aqui.
-do $$
-declare v_nome text;
-begin
-  select conname into v_nome from pg_constraint
-   where conrelid = 'public.pm_comments'::regclass and contype = 'c'
-     and pg_get_constraintdef(oid) ilike '%tipo%replaneamento%';
-  if v_nome is not null then
-    execute format('alter table public.pm_comments drop constraint %I', v_nome);
-  end if;
-  -- Só conversa: o registo de alterações mudou-se para pm_task_log (secção 5c).
-  alter table public.pm_comments add constraint pm_comments_tipo_check
-    check (tipo = 'comentario');
-exception when duplicate_object then null;
-end $$;
+-- A restrição do tipo aperta-se na secção 5c, depois de os registos antigos
+-- saírem daqui para o histórico. Apertá-la antes rebentava em qualquer base de
+-- dados que já tivesse replaneamentos gravados — ou seja, numa a sério.
 create index if not exists pm_comments_task_idx on public.pm_comments(task_id);
 
 create table if not exists public.pm_attachments (
@@ -688,6 +675,23 @@ select c.task_id, c.autor_id,
  where c.tipo <> 'comentario';
 
 delete from public.pm_comments where tipo <> 'comentario';
+
+-- Agora que já não sobra nenhum registo aqui, os comentários voltam a ser só
+-- conversa. `create table if not exists` não mexe numa tabela que já lá está,
+-- por isso a restrição troca-se à mão.
+do $$
+declare v_nome text;
+begin
+  select conname into v_nome from pg_constraint
+   where conrelid = 'public.pm_comments'::regclass and contype = 'c'
+     and pg_get_constraintdef(oid) ilike '%tipo%';
+  if v_nome is not null then
+    execute format('alter table public.pm_comments drop constraint %I', v_nome);
+  end if;
+  alter table public.pm_comments add constraint pm_comments_tipo_check
+    check (tipo = 'comentario');
+exception when duplicate_object then null;
+end $$;
 
 -- A justificação viaja numa definição de sessão, posta pelas funções da secção
 -- 5, para o gatilho a apanhar sem ter de a repetir em cada sítio.

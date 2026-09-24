@@ -444,7 +444,12 @@ begin
 end $$;
 
 reset role;
-delete from public.pm_tasks where titulo in ('__teste_acessos__','__nao_devia__','__mexido__','__parcial__');
+-- Limpar tudo o que o teste criou, para poder correr as vezes que forem
+-- precisas. O '__renomeada__' é a tarefa alvo, que um dos testes renomeia.
+delete from public.pm_tasks where titulo in
+  ('__teste_acessos__','__nao_devia__','__mexido__','__parcial__',
+   '__renomeada__','__datas_parcial__');
+delete from public.pm_empresas where nome in ('__emp_parcial__','__mexida__');
 
 select o_que as "o que se testou", resultado from _res order by ordem;
 
