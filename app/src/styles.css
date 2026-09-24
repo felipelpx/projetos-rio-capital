@@ -934,3 +934,26 @@ textarea.field{resize:vertical;min-height:88px;line-height:1.5}
   right:0;left:auto;min-width:250px;display:flex;flex-direction:column;gap:2px;padding:10px;
 }
 .conta-pop .subbox{margin-top:6px}
+
+
+/* ---------- histórico de alterações ---------- */
+.hist{display:flex;flex-direction:column;gap:2px;margin-top:2px}
+.histrow{display:flex;gap:8px;padding:6px 2px;border-bottom:1px solid var(--line)}
+.histrow:last-child{border-bottom:0}
+.hist-av{
+  flex:none;width:18px;height:18px;border-radius:50%;margin-top:1px;
+  display:grid;place-items:center;color:#fff;font-size:9px;font-weight:600;
+  font-family:"Archivo",sans-serif;
+}
+.hist-main{min-width:0;flex:1 1 auto}
+.hist-tit{margin:0;font-size:12.5px;color:var(--ink-2);line-height:1.4}
+.hist-val{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--ink)}
+.hist-pe{margin:1px 0 0;font-size:10.5px;color:var(--ink-3)}
+.hist-just{
+  margin:3px 0 0;font-size:11.5px;color:var(--ink-2);line-height:1.45;
+  padding-left:8px;border-left:2px solid var(--line-strong);
+}
+.cm-acoes{display:flex;gap:8px;margin-left:auto;opacity:0;transition:opacity .12s}
+.cm:hover .cm-acoes{opacity:1}
+.cm-acoes .linkbtn{font-size:11px}
+.cm-edit{color:var(--ink-3)}

@@ -45,11 +45,12 @@ Está todo em `01_schema.sql`, com as políticas. Em resumo:
 | `pm_tasks` | tarefa; `fim` (real) e `fim_previsto` (linha de base imutável); `tem_custo` e `custo_previsto` (orçamento, euros); `setor` (`comercial`/`operacional`, ou vazio) |
 | `pm_task_assignees` | responsáveis → utilizadores |
 | `pm_task_deps` | dependências fim-a-início, com `dias_espera` (espera entre o fim da antecessora e o arranque) |
-| `pm_comments` | comentários e registos: `datas` (com `campo`, `de_data`/`para_data`), `replaneamento` (linha de base), `orcamento` (`de_valor`/`para_valor`) |
+| `pm_comments` | só conversa |
+| `pm_task_log` | histórico de alterações: `tipo` (tarefa/campo/responsavel/dependencia/anexo/comentario), `campo`, `de`, `para`, `texto` (justificação). Escrito só por gatilhos; sem políticas de escrita |
 | `pm_attachments` | ficheiros (Storage) e links |
 | `pm_subscriptions` | quem quer o resumo diário e com que âmbito |
 
-Sete invariantes que não se devem perder:
+Oito invariantes que não se devem perder:
 
 1. **`fim_previsto` grava-se uma vez e nunca mais muda.** Há um trigger a garantir.
    Só a função `pm_repor_fim_previsto(task, justificacao)` a altera, e essa exige
@@ -64,15 +65,17 @@ Sete invariantes que não se devem perder:
    `app_access('projetos')`. Só essas pessoas podem ser responsáveis por tarefas.
    Quatro papéis: **Super admin** (tudo, incluindo repor a data prevista e gerir
    acessos), **Editor** (tudo menos essas duas coisas), **Editor parcial** (cria
-   e altera tarefas e comenta, mas não mexe em datas nem apaga) e
+   tarefas com datas e comenta, mas não grava orçamentos nem apaga) e
    **Visualizador** (vê e comenta). As restrições vivem na base de dados:
    `pm_repor_fim_previsto` recusa quem não for super admin, e o gatilho
    `pm_guardar_datas` recusa alterações de datas a quem não tem escrita
    completa. O ecrã limita-se a não mostrar botões que iam falhar.
 4. **Adiar o fim de uma tarefa empurra as dependentes.** Ver a secção 3.6.
-5. **Nenhuma data nem euro se altera sem justificação.** Preencher pela
-   primeira vez vai direto; alterar passa por `pm_alterar_datas(task, inicio,
-   fim, justificacao)` ou `pm_definir_orcamento(task, valor, justificacao)`.
+5. **Preencher é de quem cria; alterar é do super admin.** Marcar uma data
+   vazia é de `pode_criar` (os dois editores) e vai direto; gravar o primeiro
+   orçamento é de `pode_escrever` e já leva justificação. Alterar o que já lá
+   está passa por `pm_alterar_datas(task, inicio, fim, justificacao)` ou
+   `pm_definir_orcamento(task, valor, justificacao)`, ambas só de `e_admin`.
    Os gatilhos `pm_guardar_datas` e `pm_guardar_custo` recusam qualquer escrita
    directa nessas colunas, por isso não há caminho que salte o registo. A
    cascata usa a mesma função com `p_empurrada_por`, que só é aceite se a
@@ -82,7 +85,13 @@ Sete invariantes que não se devem perder:
    recusa qualquer alteração, e só `pm_definir_orcamento(task, valor,
    justificacao)` a faz — super admin, justificação obrigatória, registo em
    `pm_comments` com o valor antigo e o novo. Passar `null` retira o orçamento.
-7. **`pm_projects.empresa` é um espelho, não um campo.** Quem manda é o
+7. **O histórico escreve-se por gatilhos, nunca pela aplicação.** Toda a
+   alteração a uma tarefa, aos seus responsáveis, dependências, anexos e
+   comentários cai em `pm_task_log` por via dos gatilhos da secção 5c. A
+   justificação viaja na definição de sessão `pm.justificacao`, posta pelas
+   funções da secção 5. A tabela não tem políticas de insert, update nem
+   delete: é só de leitura, para todos, incluindo o super admin.
+8. **`pm_projects.empresa` é um espelho, não um campo.** Quem manda é o
    `empresa_id`; o texto é mantido por dois gatilhos (`pm_projects_empresa`
    ao escrever o projeto, `pm_empresas_renomear` ao renomear a empresa). Existe
    para que tudo o que já lia `.empresa` continue a ler, e para que renomear uma

@@ -50,9 +50,9 @@ export const NIVEIS = {
 
 /** O que cada papel pode, em palavras — para a barra lateral. */
 export const NIVEIS_EXPLICACAO = {
-  admin: "Faz tudo, incluindo repor a data prevista e gerir acessos.",
-  interact: "Cria e altera tarefas, mexe em datas e dependências, apaga.",
-  contrib: "Cria e altera tarefas e comenta. Não mexe em datas nem apaga.",
+  admin: "Faz tudo: altera datas e orçamentos já gravados, repõe a data prevista e gere acessos.",
+  interact: "Cria tarefas com datas, grava orçamentos, mexe em dependências, apaga.",
+  contrib: "Cria tarefas com datas e comenta. Não grava orçamentos nem apaga.",
   view: "Vê o quadro e comenta."
 };
 

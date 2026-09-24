@@ -337,7 +337,9 @@ begin
     return new;
   end if;
 
-  if not public.pode_escrever('projetos') then
+  -- Marcar as datas de uma tarefa nova é planear, e planeia quem cria: os dois
+  -- editores. O visualizador não.
+  if not public.pode_criar('projetos') then
     if tg_op = 'INSERT' then
       if new.inicio is not null or new.fim is not null or new.fim_previsto is not null then
         raise exception 'O teu acesso não permite definir datas.';
@@ -351,12 +353,12 @@ begin
   end if;
 
   -- Escrever a primeira data é preencher, não alterar: passa. Mexer numa data
-  -- que já lá estava muda o plano de toda a gente, e passa pela função
-  -- pm_alterar_datas, que obriga a dizer porquê.
+  -- que já lá estava muda o plano de toda a gente, e isso é de super admin,
+  -- pela função pm_alterar_datas, que obriga a dizer porquê.
   if tg_op = 'UPDATE' then
     if (old.inicio is not null and new.inicio is distinct from old.inicio)
     or (old.fim    is not null and new.fim    is distinct from old.fim) then
-      raise exception 'Alterar uma data já marcada exige uma justificação.';
+      raise exception 'Alterar uma data já marcada é de super admin, e exige justificação.';
     end if;
   end if;
   return new;
@@ -456,10 +458,10 @@ create table if not exists public.pm_comments (
   task_id     uuid not null references public.pm_tasks(id) on delete cascade,
   autor_id    uuid references public.profiles(id) on delete set null,
   tipo        text not null default 'comentario'
-              check (tipo in ('comentario','replaneamento','orcamento','datas')),
+              check (tipo = 'comentario'),
   texto       text not null,
-  de_data     date,   -- só em 'replaneamento'
-  para_data   date,   -- só em 'replaneamento'
+  de_data     date,   -- herdado: o registo de alterações vive agora em pm_task_log
+  para_data   date,   --   idem; ficam por apagar para não partir nada que os leia
   criado_em   timestamptz not null default now(),
   editado_em  timestamptz
 );
@@ -477,8 +479,9 @@ begin
   if v_nome is not null then
     execute format('alter table public.pm_comments drop constraint %I', v_nome);
   end if;
+  -- Só conversa: o registo de alterações mudou-se para pm_task_log (secção 5c).
   alter table public.pm_comments add constraint pm_comments_tipo_check
-    check (tipo in ('comentario','replaneamento','orcamento','datas'));
+    check (tipo = 'comentario');
 exception when duplicate_object then null;
 end $$;
 create index if not exists pm_comments_task_idx on public.pm_comments(task_id);
@@ -519,12 +522,13 @@ begin
   select fim_previsto, fim into v_antiga, v_nova from public.pm_tasks where id = p_task;
   if v_nova is null then raise exception 'A tarefa não tem data de fim.'; end if;
 
-  insert into public.pm_comments (task_id, autor_id, tipo, texto, de_data, para_data)
-  values (p_task, auth.uid(), 'replaneamento', p_justificacao, v_antiga, v_nova);
-
+  /* O registo fica a cargo do gatilho da secção 5c: a justificação viaja na
+     sessão e ele apanha-a. Assim há um único sítio a escrever o histórico. */
+  perform set_config('pm.justificacao', p_justificacao, true);
   perform set_config('pm.replanear', '1', true);
   update public.pm_tasks set fim_previsto = v_nova where id = p_task;
   perform set_config('pm.replanear', '0', true);
+  perform set_config('pm.justificacao', '', true);
 end;
 $$;
 
@@ -546,7 +550,14 @@ create or replace function public.pm_alterar_datas(
 declare
   v_ini date; v_fim date; v_prev date; v_just text; v_nova_base date;
 begin
-  if not public.pode_escrever('projetos') then
+  /* A cascata é a consequência de uma alteração que já foi autorizada: quem
+     mexeu na tarefa de origem é que tinha de ter direito a isso. Mexer numa
+     data à mão é outra coisa, e é de super admin. */
+  if p_empurrada_por is null then
+    if not public.e_admin('projetos') then
+      raise exception 'Só um super admin pode alterar uma data já marcada.';
+    end if;
+  elsif not public.pode_criar('projetos') then
     raise exception 'O teu acesso não permite alterar datas.';
   end if;
   select inicio, fim, fim_previsto into v_ini, v_fim, v_prev
@@ -570,26 +581,19 @@ begin
     raise exception 'O fim não pode ser antes do início.';
   end if;
 
-  if p_inicio is distinct from v_ini then
-    insert into public.pm_comments (task_id, autor_id, tipo, campo, texto, de_data, para_data)
-    values (p_task, auth.uid(), 'datas', 'inicio', v_just, v_ini, p_inicio);
-  end if;
-  if p_fim is distinct from v_fim then
-    insert into public.pm_comments (task_id, autor_id, tipo, campo, texto, de_data, para_data)
-    values (p_task, auth.uid(), 'datas', 'fim', v_just, v_fim, p_fim);
-  end if;
-
   /* A bandeira que deixa passar os gatilhos também trava o que fixa a linha de
      base, por isso trata-se dela aqui. Numa tarefa que ainda não tinha linha de
      base, o plano era o fim que lá estava: é esse que se guarda, senão a
      derrapagem que estamos a criar desaparecia. */
   v_nova_base := coalesce(v_prev, v_fim, p_fim);
 
+  perform set_config('pm.justificacao', v_just, true);
   perform set_config('pm.replanear', '1', true);
   update public.pm_tasks
      set inicio = p_inicio, fim = p_fim, fim_previsto = v_nova_base
    where id = p_task;
   perform set_config('pm.replanear', '0', true);
+  perform set_config('pm.justificacao', '', true);
 end;
 $$;
 
@@ -625,18 +629,248 @@ begin
     raise exception 'O valor é o mesmo que já lá estava.';
   end if;
 
-  insert into public.pm_comments (task_id, autor_id, tipo, texto, de_valor, para_valor)
-  values (p_task, auth.uid(), 'orcamento', p_justificacao, v_antigo, p_valor);
-
+  perform set_config('pm.justificacao', p_justificacao, true);
   perform set_config('pm.replanear', '1', true);
   update public.pm_tasks
      set custo_previsto = p_valor,
          tem_custo = case when p_valor is null then false else true end
    where id = p_task;
   perform set_config('pm.replanear', '0', true);
+  perform set_config('pm.justificacao', '', true);
 end;
 $$;
 
+
+
+-- ----------------------------------------------------------------------------
+-- 5c. Histórico de alterações
+-- ----------------------------------------------------------------------------
+-- Uma linha por cada coisa que muda numa tarefa: campos, responsáveis,
+-- dependências, anexos e comentários editados ou apagados.
+--
+-- Escreve-se por gatilhos e não pela aplicação, de propósito. Um registo que
+-- depende de o cliente se lembrar de o escrever é um registo com buracos: basta
+-- uma alteração feita por outra via — um script, a consola do Supabase, uma
+-- versão antiga da aplicação — para desaparecer do histórico. Assim não há
+-- caminho que o salte.
+--
+-- Ninguém escreve aqui à mão: não há políticas de insert, update nem delete, e
+-- os gatilhos são SECURITY DEFINER. O histórico é só de leitura, para todos.
+create table if not exists public.pm_task_log (
+  id         bigint generated always as identity primary key,
+  task_id    uuid not null references public.pm_tasks(id) on delete cascade,
+  autor_id   uuid references public.profiles(id) on delete set null,
+  tipo       text not null
+             check (tipo in ('tarefa','campo','responsavel','dependencia','anexo','comentario')),
+  campo      text,     -- nome da coluna, quando tipo = 'campo'
+  de         text,     -- valor antigo, em texto; null quando não havia
+  para       text,     -- valor novo, em texto; null quando se retirou
+  texto      text,     -- a justificação, quando a alteração exigiu uma
+  criado_em  timestamptz not null default now()
+);
+create index if not exists pm_task_log_idx on public.pm_task_log(task_id, criado_em desc);
+
+-- Mudança de casa: os registos de replaneamento, datas e orçamento viviam
+-- misturados com a conversa, em pm_comments. Passam para aqui. Corre uma vez e
+-- não tem efeito nas seguintes, porque depois já não sobra nenhum lá.
+insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto, criado_em)
+select c.task_id, c.autor_id,
+       case when c.tipo = 'orcamento' then 'campo' else 'campo' end,
+       case c.tipo
+         when 'orcamento'     then 'custo_previsto'
+         when 'replaneamento' then 'fim_previsto'
+         else coalesce(c.campo, 'fim')
+       end,
+       coalesce(c.de_data::text, c.de_valor::text),
+       coalesce(c.para_data::text, c.para_valor::text),
+       c.texto, c.criado_em
+  from public.pm_comments c
+ where c.tipo <> 'comentario';
+
+delete from public.pm_comments where tipo <> 'comentario';
+
+-- A justificação viaja numa definição de sessão, posta pelas funções da secção
+-- 5, para o gatilho a apanhar sem ter de a repetir em cada sítio.
+create or replace function public.pm_registar_tarefa()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  v_just text := nullif(btrim(coalesce(current_setting('pm.justificacao', true), '')), '');
+  v_quem uuid := auth.uid();
+begin
+  if tg_op = 'INSERT' then
+    insert into public.pm_task_log (task_id, autor_id, tipo, texto)
+    values (new.id, v_quem, 'tarefa', 'Tarefa criada');
+    return null;
+  end if;
+
+  if new.titulo is distinct from old.titulo then
+    insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto)
+    values (new.id, v_quem, 'campo', 'titulo', old.titulo, new.titulo, v_just);
+  end if;
+  if new.project_id is distinct from old.project_id then
+    insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto)
+    values (new.id, v_quem, 'campo', 'project_id', old.project_id::text, new.project_id::text, v_just);
+  end if;
+  if new.status_id is distinct from old.status_id then
+    insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto)
+    values (new.id, v_quem, 'campo', 'status_id', old.status_id, new.status_id, v_just);
+  end if;
+  if new.prioridade is distinct from old.prioridade then
+    insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto)
+    values (new.id, v_quem, 'campo', 'prioridade', old.prioridade, new.prioridade, v_just);
+  end if;
+  if new.setor is distinct from old.setor then
+    insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto)
+    values (new.id, v_quem, 'campo', 'setor', old.setor, new.setor, v_just);
+  end if;
+  if new.inicio is distinct from old.inicio then
+    insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto)
+    values (new.id, v_quem, 'campo', 'inicio', old.inicio::text, new.inicio::text, v_just);
+  end if;
+  if new.fim is distinct from old.fim then
+    insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto)
+    values (new.id, v_quem, 'campo', 'fim', old.fim::text, new.fim::text, v_just);
+  end if;
+  if new.fim_previsto is distinct from old.fim_previsto then
+    insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto)
+    values (new.id, v_quem, 'campo', 'fim_previsto', old.fim_previsto::text, new.fim_previsto::text, v_just);
+  end if;
+  if new.progresso is distinct from old.progresso then
+    insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto)
+    values (new.id, v_quem, 'campo', 'progresso', old.progresso::text, new.progresso::text, v_just);
+  end if;
+  if new.notas is distinct from old.notas then
+    insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto)
+    values (new.id, v_quem, 'campo', 'notas', old.notas, new.notas, v_just);
+  end if;
+  if new.tem_custo is distinct from old.tem_custo then
+    insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto)
+    values (new.id, v_quem, 'campo', 'tem_custo', old.tem_custo::text, new.tem_custo::text, v_just);
+  end if;
+  if new.custo_previsto is distinct from old.custo_previsto then
+    insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto)
+    values (new.id, v_quem, 'campo', 'custo_previsto', old.custo_previsto::text, new.custo_previsto::text, v_just);
+  end if;
+  if new.owner_id is distinct from old.owner_id then
+    insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto)
+    values (new.id, v_quem, 'campo', 'owner_id', old.owner_id::text, new.owner_id::text, v_just);
+  end if;
+
+  return null;
+end;
+$$;
+drop trigger if exists pm_tasks_log on public.pm_tasks;
+create trigger pm_tasks_log
+  after insert or update on public.pm_tasks
+  for each row execute function public.pm_registar_tarefa();
+
+-- Responsáveis.
+create or replace function public.pm_registar_responsavel()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  /* Apagar a tarefa arrasta consigo responsáveis, dependências, anexos e
+     comentários, e cada um destes gatilhos dispara. Não há histórico a
+     escrever para uma tarefa que deixou de existir. */
+  if tg_op = 'DELETE' and not exists (select 1 from public.pm_tasks where id = old.task_id) then
+    return null;
+  end if;
+  if tg_op = 'INSERT' then
+    insert into public.pm_task_log (task_id, autor_id, tipo, para)
+    values (new.task_id, auth.uid(), 'responsavel', new.user_id::text);
+  else
+    insert into public.pm_task_log (task_id, autor_id, tipo, de)
+    values (old.task_id, auth.uid(), 'responsavel', old.user_id::text);
+  end if;
+  return null;
+end;
+$$;
+drop trigger if exists pm_assignees_log on public.pm_task_assignees;
+create trigger pm_assignees_log
+  after insert or delete on public.pm_task_assignees
+  for each row execute function public.pm_registar_responsavel();
+
+-- Dependências, e a espera entre elas.
+create or replace function public.pm_registar_dependencia()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  /* Apagar a tarefa arrasta consigo responsáveis, dependências, anexos e
+     comentários, e cada um destes gatilhos dispara. Não há histórico a
+     escrever para uma tarefa que deixou de existir. */
+  if tg_op = 'DELETE' and not exists (select 1 from public.pm_tasks where id = old.task_id) then
+    return null;
+  end if;
+  if tg_op = 'INSERT' then
+    insert into public.pm_task_log (task_id, autor_id, tipo, para, texto)
+    values (new.task_id, auth.uid(), 'dependencia', new.depende_de::text,
+            case when new.dias_espera > 0 then new.dias_espera::text || ' dias de espera' end);
+  elsif tg_op = 'DELETE' then
+    insert into public.pm_task_log (task_id, autor_id, tipo, de)
+    values (old.task_id, auth.uid(), 'dependencia', old.depende_de::text);
+  elsif new.dias_espera is distinct from old.dias_espera then
+    insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto)
+    values (new.task_id, auth.uid(), 'dependencia', 'dias_espera',
+            old.dias_espera::text, new.dias_espera::text, new.depende_de::text);
+  end if;
+  return null;
+end;
+$$;
+drop trigger if exists pm_deps_log on public.pm_task_deps;
+create trigger pm_deps_log
+  after insert or update or delete on public.pm_task_deps
+  for each row execute function public.pm_registar_dependencia();
+
+-- Anexos.
+create or replace function public.pm_registar_anexo()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  /* Apagar a tarefa arrasta consigo responsáveis, dependências, anexos e
+     comentários, e cada um destes gatilhos dispara. Não há histórico a
+     escrever para uma tarefa que deixou de existir. */
+  if tg_op = 'DELETE' and not exists (select 1 from public.pm_tasks where id = old.task_id) then
+    return null;
+  end if;
+  if tg_op = 'INSERT' then
+    insert into public.pm_task_log (task_id, autor_id, tipo, para)
+    values (new.task_id, auth.uid(), 'anexo', new.nome);
+  else
+    insert into public.pm_task_log (task_id, autor_id, tipo, de)
+    values (old.task_id, auth.uid(), 'anexo', old.nome);
+  end if;
+  return null;
+end;
+$$;
+drop trigger if exists pm_anexos_log on public.pm_attachments;
+create trigger pm_anexos_log
+  after insert or delete on public.pm_attachments
+  for each row execute function public.pm_registar_anexo();
+
+-- Comentários: escrever um não é uma alteração, mas mudá-lo ou apagá-lo é —
+-- e o que lá estava antes deixaria de existir se não ficasse aqui.
+create or replace function public.pm_registar_comentario()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  /* Apagar a tarefa arrasta consigo responsáveis, dependências, anexos e
+     comentários, e cada um destes gatilhos dispara. Não há histórico a
+     escrever para uma tarefa que deixou de existir. */
+  if tg_op = 'DELETE' and not exists (select 1 from public.pm_tasks where id = old.task_id) then
+    return null;
+  end if;
+  if tg_op = 'UPDATE' then
+    if new.texto is distinct from old.texto then
+      insert into public.pm_task_log (task_id, autor_id, tipo, de, para)
+      values (new.task_id, auth.uid(), 'comentario', old.texto, new.texto);
+    end if;
+  else
+    insert into public.pm_task_log (task_id, autor_id, tipo, de)
+    values (old.task_id, auth.uid(), 'comentario', old.texto);
+  end if;
+  return null;
+end;
+$$;
+drop trigger if exists pm_comments_log on public.pm_comments;
+create trigger pm_comments_log
+  after update or delete on public.pm_comments
+  for each row execute function public.pm_registar_comentario();
 
 -- ----------------------------------------------------------------------------
 -- 6. Subscrições do resumo diário
@@ -662,6 +896,7 @@ alter table public.pm_tasks          enable row level security;
 alter table public.pm_task_assignees enable row level security;
 alter table public.pm_task_deps      enable row level security;
 alter table public.pm_comments       enable row level security;
+alter table public.pm_task_log       enable row level security;
 alter table public.pm_attachments    enable row level security;
 alter table public.pm_subscriptions  enable row level security;
 
@@ -791,6 +1026,13 @@ create policy com_editar on public.pm_comments for update
 drop policy if exists com_apagar on public.pm_comments;
 create policy com_apagar on public.pm_comments for delete
   using (autor_id = auth.uid() and tipo = 'comentario');
+
+-- Histórico: quem vê a tarefa vê o que lhe aconteceu. Não há política de
+-- escrita nenhuma, de propósito — só os gatilhos da secção 5c lá põem linhas,
+-- e ninguém as muda nem apaga depois.
+drop policy if exists log_ler on public.pm_task_log;
+create policy log_ler on public.pm_task_log for select
+  using (exists (select 1 from public.pm_tasks t where t.id = task_id));
 
 drop policy if exists anx_ler on public.pm_attachments;
 create policy anx_ler on public.pm_attachments for select

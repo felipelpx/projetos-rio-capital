@@ -84,10 +84,22 @@ export const tasks = [
 ];
 export const comments = [
   { id: "c1", task_id: "t3", autor_id: "u1", tipo: "comentario", texto: "O fornecedor pediu mais uma semana.", criado_em: "2026-09-20T10:00:00Z" },
-  { id: "c3", task_id: "t2", autor_id: "u1", tipo: "orcamento", texto: "O empreiteiro subiu o preço do betão.",
-    de_valor: 38000, para_valor: 41500, criado_em: "2026-09-21T09:30:00Z" },
-  { id: "c2", task_id: "t3", autor_id: "u1", tipo: "replaneamento", texto: "Atraso do fornecedor de limpeza.",
-    de_data: "2026-09-22", para_data: "2026-09-30", criado_em: "2026-09-21T09:00:00Z" }
+  { id: "c2", task_id: "t2", autor_id: "u2", tipo: "comentario", texto: "Combinei com o empreiteiro a entrada na próxima segunda.", criado_em: "2026-09-21T11:20:00Z" }
+];
+
+/* O histórico, que em produção é escrito pelos gatilhos da base de dados. */
+const h = (o) => ({ autor_id: "u1", campo: null, de: null, para: null, texto: null, ...o });
+export const historico = [
+  h({ id: "h1", task_id: "t2", tipo: "tarefa", texto: "Tarefa criada", criado_em: "2026-09-15T08:30:00Z" }),
+  h({ id: "h2", task_id: "t2", tipo: "responsavel", para: "u2", criado_em: "2026-09-15T08:31:00Z" }),
+  h({ id: "h3", task_id: "t2", tipo: "dependencia", para: "t1", criado_em: "2026-09-15T08:32:00Z" }),
+  h({ id: "h4", task_id: "t2", tipo: "campo", campo: "status_id", de: "todo", para: "doing",
+      criado_em: "2026-09-18T09:05:00Z" }),
+  h({ id: "h5", task_id: "t2", tipo: "campo", campo: "custo_previsto", de: "38000", para: "41500",
+      texto: "O empreiteiro subiu o preço do betão.", autor_id: "u1", criado_em: "2026-09-21T09:30:00Z" }),
+  h({ id: "h6", task_id: "t2", tipo: "anexo", para: "orcamento.pdf", autor_id: "u2", criado_em: "2026-09-21T09:40:00Z" }),
+  h({ id: "h7", task_id: "t3", tipo: "campo", campo: "fim", de: "2026-09-22", para: "2026-09-30",
+      texto: "Atraso do fornecedor de limpeza.", criado_em: "2026-09-21T09:00:00Z" })
 ];
 export const attachments = [
   { id: "a1", task_id: "t2", tipo: "ficheiro", nome: "orcamento.pdf", caminho: "t2/orcamento.pdf", tamanho: 284512, mime: "application/pdf" }

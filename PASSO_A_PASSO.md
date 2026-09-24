@@ -99,9 +99,9 @@ vez.
 
 | `role` | na aplicação | o que pode |
 |---|---|---|
-| `admin` | **Super admin** | tudo: cria e altera tarefas, mexe em datas, **repõe a data prevista e altera orçamentos já gravados, com justificação**, e dá ou retira acesso às pessoas |
-| `interact` | **Editor** | cria e altera tarefas, projetos e empresas, mexe nas datas e nas dependências, apaga, comenta, anexa. **Não** repõe a data prevista nem gere acessos |
-| `contrib` | **Editor parcial** | cria tarefas, projetos e empresas, altera tarefas, comenta e anexa. **Não** mexe em datas, custos nem dependências, **não apaga** nada e **não altera projetos nem empresas** que já existam |
+| `admin` | **Super admin** | tudo: **é o único que altera datas e orçamentos já gravados**, sempre com justificação, repõe a data prevista, e dá ou retira acesso às pessoas |
+| `interact` | **Editor** | cria tarefas **com datas**, grava orçamentos, cria e altera projetos e empresas, mexe nas dependências, apaga, comenta, anexa. **Não** altera datas nem orçamentos já gravados, não repõe a data prevista nem gere acessos |
+| `contrib` | **Editor parcial** | cria tarefas **com datas**, projetos e empresas, altera tarefas, comenta e anexa. **Não** grava orçamentos nem altera datas já marcadas, **não apaga** nada e **não altera projetos nem empresas** que já existam |
 | `view` | **Visualizador** | vê o quadro e comenta. Não cria nem altera |
 
 Duas fronteiras, ambas de propósito:
@@ -124,14 +124,41 @@ ela teve ficam exatamente como estão, com o nome dela, que é o que interessa
 daqui a dois anos quando alguém for ver o que se passou. A empresa de um projeto
 escolhe-se no editor do projeto, e pode criar-se ali mesmo.
 
-**Toda a alteração de datas ou de orçamento leva justificação.** Marcar a
-primeira data, ou gravar o primeiro orçamento, é preencher — e o primeiro
-orçamento já pede a razão. A partir daí, mexer numa data ou num valor que já lá
-estava abre um campo a perguntar porquê, e a resposta fica nos comentários da
-tarefa com o nome de quem mexeu e o valor antigo. Não é só o ecrã a pedir: a
-base de dados recusa a alteração sem justificação, venha ela de onde vier.
+**Histórico de alterações.** Cada tarefa tem, no fundo da ficha, um
+**Histórico de alterações** com tudo o que lhe aconteceu: título, estado,
+prioridade, setor, datas, orçamento, notas, responsáveis, dependências, anexos,
+e comentários editados ou apagados — com quem fez, quando, o valor antigo e o
+novo. As justificações aparecem aí, por baixo da alteração a que pertencem.
+
+Quem o escreve é a base de dados, não a aplicação. Um registo que dependesse de
+o ecrã se lembrar de o escrever teria buracos: bastava uma alteração feita por
+outra via — um script, a consola do Supabase, uma versão antiga da aplicação —
+para desaparecer. Assim não há caminho que o salte. E **ninguém o pode mexer**:
+não há maneira de escrever, editar ou apagar linhas do histórico, nem para um
+super admin.
+
+**Comentários.** Cada pessoa edita e apaga os que escreveu — passando o rato por
+cima do comentário aparecem *Editar* e *Apagar*. O que lá estava antes não se
+perde: fica no histórico. Os comentários passaram a ser só conversa; os
+registos de alteração, que antes apareciam misturados com eles, mudaram-se para
+o histórico.
+
+**Preencher é de todos; alterar é do super admin.** Uma data por marcar
+preenche-se sem cerimónia — os dois editores marcam o início e o fim das
+tarefas que criam. Um orçamento por gravar é do editor completo, e já pede a
+razão, porque aí o número em si é a informação.
+
+A partir daí fecha. Mexer numa data ou num valor que já lá estava é **só do
+super admin**, e abre um campo a perguntar porquê; a resposta fica nos
+comentários da tarefa, com o nome de quem mexeu e o valor antigo. Não é só o
+ecrã a pedir: a base de dados recusa, venha o pedido de onde vier. Para os
+outros, o campo fica bloqueado com a nota *"Marcada. Só um super admin a pode
+alterar."*
+
 Quando uma tarefa é empurrada por outra de que depende, a justificação
-escreve-se sozinha ("Empurrada automaticamente por: …") em vez de interromper.
+escreve-se sozinha ("Empurrada automaticamente por: …") em vez de interromper —
+isso é a consequência de uma alteração que já foi autorizada, não uma
+alteração nova.
 
 **O setor** (Comercial / Operacional) marca-se na ficha da tarefa, tem coluna
 própria na Lista e filtro próprio nas barras de filtro. As tarefas antigas ficam

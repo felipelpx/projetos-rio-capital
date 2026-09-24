@@ -63,7 +63,7 @@ export default function App() {
 function Quadro({ session }) {
   const dados = useBoard(session);
   const {
-    projects, empresas, statuses, tasks, comments, attachments, pessoas,
+    projects, empresas, statuses, tasks, comments, historico, attachments, pessoas,
     carregado, erro, aviso, setAviso, setErro,
     podeEscrever, podeCriar, podeComentar, souAdmin,
     patchTarefa, alterarDatas, guardar, recarregar, ajustarDependencias, acesso
@@ -173,7 +173,7 @@ function Quadro({ session }) {
   }, [ajustarDependencias]);
 
   const ctx = {
-    base, listaFiltrada, tasks, statuses, projects, pessoas, comments, attachments,
+    base, listaFiltrada, tasks, statuses, projects, pessoas, comments, historico, attachments,
     hoje, podeEscrever, podeCriar, podeComentar, souAdmin,
     filtros, setFiltros, abertoMulti, setAbertoMulti,
     filtroProjetos, itensEstado, itensPrioridade, itensSetor, itensPessoa, fotos,

@@ -15,13 +15,13 @@ function montarTarefas(tasks, assignees, deps) {
 
 const TABELAS = [
   "pm_projects", "pm_empresas", "pm_statuses", "pm_tasks", "pm_task_assignees",
-  "pm_task_deps", "pm_comments", "pm_attachments", "pm_subscriptions"
+  "pm_task_deps", "pm_comments", "pm_task_log", "pm_attachments", "pm_subscriptions"
 ];
 
 export function useBoard(session) {
   const [estado, setEstado] = useState({
     carregado: false,
-    projects: [], empresas: [], statuses: [], tasks: [], comments: [],
+    projects: [], empresas: [], statuses: [], tasks: [], comments: [], historico: [],
     attachments: [], subscriptions: [], pessoas: [], acesso: null
   });
   const [erro, setErro] = useState("");
@@ -33,7 +33,7 @@ export function useBoard(session) {
     if (porCarregar.current) return;
     porCarregar.current = true;
     try {
-      const [proj, emp, st, tk, asg, dps, cm, at, sub, acc, prof] = await Promise.all([
+      const [proj, emp, st, tk, asg, dps, cm, hist, at, sub, acc, prof] = await Promise.all([
         supabase.from("pm_projects").select("*").order("criado_em"),
         supabase.from("pm_empresas").select("*").order("nome"),
         supabase.from("pm_statuses").select("*").order("posicao"),
@@ -41,12 +41,13 @@ export function useBoard(session) {
         supabase.from("pm_task_assignees").select("*"),
         supabase.from("pm_task_deps").select("*"),
         supabase.from("pm_comments").select("*").order("criado_em"),
+        supabase.from("pm_task_log").select("*").order("criado_em"),
         supabase.from("pm_attachments").select("*"),
         supabase.from("pm_subscriptions").select("*"),
         supabase.from("app_access").select("*").eq("area", "projetos"),
         supabase.from("profiles").select("*")
       ]);
-      const falhou = [proj, emp, st, tk, asg, dps, cm, at, sub, acc, prof].find((r) => r.error);
+      const falhou = [proj, emp, st, tk, asg, dps, cm, hist, at, sub, acc, prof].find((r) => r.error);
       if (falhou) throw falhou.error;
 
       /* A equipa é quem tem acesso à área — não há lista à parte. */
@@ -70,6 +71,7 @@ export function useBoard(session) {
         statuses: st.data || [],
         tasks: montarTarefas(tk.data || [], asg.data || [], dps.data || []),
         comments: cm.data || [],
+        historico: hist.data || [],
         attachments: at.data || [],
         subscriptions: sub.data || [],
         pessoas,
@@ -151,18 +153,22 @@ export function useBoard(session) {
     return guardar(() => supabase.from("pm_tasks").update(patch).eq("id", id));
   }, [guardar]);
 
-  /* Mexer numa data que já estava marcada exige dizer porquê — a base de dados
-     recusa sem isso. Marcar a primeira data é preencher, e essa vai direta. */
+  /* Marcar uma data que estava vazia é planear, e faz-se sem cerimónia: qualquer
+     editor a põe. Mexer numa que já lá estava muda o plano de toda a gente, é de
+     super admin e leva justificação — a base de dados recusa sem ela. */
   const alterarDatas = useCallback(async (id, novas, justificacao) => {
     const antes = tarefasRef.current.find((t) => t.id === id);
     if (!antes) return { ok: false };
     const inicio = novas.inicio !== undefined ? novas.inicio : antes.inicio;
     const fim = novas.fim !== undefined ? novas.fim : antes.fim;
-    const primeira = (antes.inicio == null && antes.fim == null);
+    /* Só preencheu se tudo o que mexeu estava vazio antes. */
+    const soPreencheu =
+      (inicio === antes.inicio || antes.inicio == null) &&
+      (fim === antes.fim || antes.fim == null);
     const adiou = fim && (!antes.fim || fim > antes.fim);
 
     return guardar(async () => {
-      const r = primeira
+      const r = soPreencheu
         ? await supabase.from("pm_tasks").update({ inicio, fim }).eq("id", id)
         : await supabase.rpc("pm_alterar_datas", {
             p_task: id, p_inicio: inicio, p_fim: fim,

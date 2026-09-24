@@ -14,6 +14,7 @@ const estado = {
   pm_comments: F.comments.map((c) => ({ ...c })),
   pm_attachments: F.attachments.map((a) => ({ ...a })),
   pm_task_assignees: F.tasks.flatMap((t) => t.assignees.map((u) => ({ task_id: t.id, user_id: u }))),
+  pm_task_log: (F.historico || []).map((l) => ({ ...l })),
   pm_task_deps: F.tasks.flatMap((t) =>
     t.deps.map((d) => ({ task_id: t.id, depende_de: d.depende_de, dias_espera: d.dias_espera })))
 };
@@ -47,8 +48,38 @@ const novoId = () => "x" + ++seq;
    que a base de dados recusaria — senão mostrava permissões que não existem. */
 let papel = "admin";
 const ficheiros = new Map(Object.entries(F.fotosExemplo || {}));
+
+/* O mesmo que o gatilho pm_registar_tarefa faz no Postgres. Sem isto, a
+   pré-visualização mostrava um histórico que só cresce em produção. */
+const CAMPOS_LOG = [
+  "titulo", "project_id", "status_id", "prioridade", "setor",
+  "inicio", "fim", "fim_previsto", "progresso", "notas",
+  "tem_custo", "custo_previsto", "owner_id"
+];
+let justificacao = null;
+export function definirJustificacao(j) { justificacao = j || null; }
+
+function registar(linha) {
+  estado.pm_task_log = [...estado.pm_task_log, {
+    id: novoId(), autor_id: "u1", criado_em: new Date().toISOString(),
+    campo: null, de: null, para: null, texto: null, ...linha
+  }];
+}
+
+function registarCampos(antes, depois) {
+  for (const c of CAMPOS_LOG) {
+    if (String(antes?.[c] ?? "") === String(depois?.[c] ?? "")) continue;
+    registar({
+      task_id: depois.id, tipo: "campo", campo: c,
+      de: antes?.[c] == null ? null : String(antes[c]),
+      para: depois?.[c] == null ? null : String(depois[c]),
+      texto: justificacao
+    });
+  }
+}
 export function definirPapel(p) { papel = p; }
 const podeEscrever = () => papel === "interact" || papel === "admin";
+const podeCriar = () => papel === "contrib" || podeEscrever();
 
 function consulta(tabela) {
   let filtros = [];
@@ -75,6 +106,12 @@ export const supabase = {
         const arr = Array.isArray(linhas) ? linhas : [linhas];
         const criadas = arr.map((l) => ({ id: novoId(), ...l }));
         estado[tabela] = [...estado[tabela], ...criadas];
+        for (const c of criadas) {
+          if (tabela === "pm_tasks") registar({ task_id: c.id, tipo: "tarefa", texto: "Tarefa criada" });
+          if (tabela === "pm_task_assignees") registar({ task_id: c.task_id, tipo: "responsavel", para: c.user_id });
+          if (tabela === "pm_task_deps") registar({ task_id: c.task_id, tipo: "dependencia", para: c.depende_de });
+          if (tabela === "pm_attachments") registar({ task_id: c.task_id, tipo: "anexo", para: c.nome });
+        }
         avisar();
         const r = { data: criadas, error: null };
         return {
@@ -94,14 +131,14 @@ export const supabase = {
                não prometer o que a base de dados recusa. */
             const alvos = estado[tabela].filter((r) => filtros.every(([c, v]) => r[c] === v));
             if (tabela === "pm_tasks" && ("inicio" in campos || "fim" in campos)) {
-              if (!podeEscrever()) {
-                return Promise.resolve({ error: { message: "O teu acesso não permite alterar datas." } }).then(res);
+              if (!podeCriar()) {
+                return Promise.resolve({ error: { message: "O teu acesso não permite definir datas." } }).then(res);
               }
               const marcada = alvos.find((r) =>
                 (r.inicio != null && "inicio" in campos && campos.inicio !== r.inicio) ||
                 (r.fim != null && "fim" in campos && campos.fim !== r.fim));
               if (marcada) {
-                return Promise.resolve({ error: { message: "Alterar uma data já marcada exige uma justificação." } }).then(res);
+                return Promise.resolve({ error: { message: "Alterar uma data já marcada é de super admin, e exige justificação." } }).then(res);
               }
             }
             if (tabela === "pm_tasks" && "custo_previsto" in campos) {
@@ -116,11 +153,22 @@ export const supabase = {
                 return Promise.resolve({ error: { message: "A tarefa tem orçamento. Para o retirar é preciso um super admin." } }).then(res);
               }
             }
+            const antes = tabela === "pm_tasks" ? alvos.map((r) => ({ ...r })) : [];
             estado[tabela] = estado[tabela].map((r) =>
               filtros.every(([c, v]) => r[c] === v)
                 ? { ...r, ...campos, ...(campos.custo_previsto != null ? { tem_custo: true } : {}) }
                 : r
             );
+            if (tabela === "pm_tasks") {
+              for (const a of antes) {
+                registarCampos(a, estado.pm_tasks.find((t) => t.id === a.id));
+              }
+            }
+            if (tabela === "pm_comments" && "texto" in campos) {
+              for (const a of alvos) {
+                registar({ task_id: a.task_id, tipo: "comentario", de: a.texto, para: campos.texto });
+              }
+            }
             avisar();
             return Promise.resolve({ error: null }).then(res);
           }
@@ -132,9 +180,18 @@ export const supabase = {
         const api = {
           eq(coluna, valor) { filtros.push([coluna, valor]); return api; },
           then(res) {
+            const idos = estado[tabela].filter((r) => filtros.every(([c, v]) => r[c] === v));
             estado[tabela] = estado[tabela].filter(
               (r) => !filtros.every(([c, v]) => r[c] === v)
             );
+            /* Apagar a tarefa arrasta os filhos: aí não há histórico a escrever. */
+            const tarefaViva = (id) => estado.pm_tasks.some((t) => t.id === id);
+            for (const o of idos) {
+              if (tabela === "pm_task_assignees" && tarefaViva(o.task_id)) registar({ task_id: o.task_id, tipo: "responsavel", de: o.user_id });
+              if (tabela === "pm_task_deps" && tarefaViva(o.task_id)) registar({ task_id: o.task_id, tipo: "dependencia", de: o.depende_de });
+              if (tabela === "pm_attachments" && tarefaViva(o.task_id)) registar({ task_id: o.task_id, tipo: "anexo", de: o.nome });
+              if (tabela === "pm_comments" && tarefaViva(o.task_id)) registar({ task_id: o.task_id, tipo: "comentario", de: o.texto });
+            }
             avisar();
             return Promise.resolve({ error: null }).then(res);
           }
@@ -146,33 +203,32 @@ export const supabase = {
   rpc(nome, args) {
     if (nome === "pm_alterar_datas") {
       const { p_task, p_inicio, p_fim, p_justificacao, p_empurrada_por } = args || {};
-      if (!podeEscrever()) {
+      if (!p_empurrada_por && papel !== "admin") {
+        return Promise.resolve({ error: { message: "Só um super admin pode alterar uma data já marcada." } });
+      }
+      if (p_empurrada_por && !podeCriar()) {
         return Promise.resolve({ error: { message: "O teu acesso não permite alterar datas." } });
       }
       const tarefa = estado.pm_tasks.find((t) => t.id === p_task);
       if (!tarefa) return Promise.resolve({ error: { message: "A tarefa não existe." } });
-      let justificacao;
+      let razao;
       if (p_empurrada_por) {
         const deps = estado.pm_task_deps.filter((d) => d.task_id === p_task);
         if (!deps.some((d) => d.depende_de === p_empurrada_por)) {
           return Promise.resolve({ error: { message: "Essa tarefa não é antecessora desta." } });
         }
         const quem = estado.pm_tasks.find((t) => t.id === p_empurrada_por);
-        justificacao = "Empurrada automaticamente por: " + (quem?.titulo || "outra tarefa");
+        razao = "Empurrada automaticamente por: " + (quem?.titulo || "outra tarefa");
       } else {
-        justificacao = String(p_justificacao || "").trim();
-        if (!justificacao) return Promise.resolve({ error: { message: "A justificação é obrigatória." } });
+        razao = String(p_justificacao || "").trim();
+        if (!razao) return Promise.resolve({ error: { message: "A justificação é obrigatória." } });
       }
-      const registos = [];
-      if (p_inicio !== tarefa.inicio) registos.push(["inicio", tarefa.inicio, p_inicio]);
-      if (p_fim !== tarefa.fim) registos.push(["fim", tarefa.fim, p_fim]);
       const base = tarefa.fim_previsto ?? tarefa.fim ?? p_fim;
-      estado.pm_tasks = estado.pm_tasks.map((t) => t.id === p_task
-        ? { ...t, inicio: p_inicio, fim: p_fim, fim_previsto: base } : t);
-      estado.pm_comments = [...estado.pm_comments, ...registos.map(([campo, de, para]) => ({
-        id: novoId(), task_id: p_task, autor_id: "u1", tipo: "datas", campo,
-        texto: justificacao, de_data: de, para_data: para, criado_em: new Date().toISOString()
-      }))];
+      const depois = { ...tarefa, inicio: p_inicio, fim: p_fim, fim_previsto: base };
+      estado.pm_tasks = estado.pm_tasks.map((t) => t.id === p_task ? depois : t);
+      definirJustificacao(razao);
+      registarCampos(tarefa, depois);
+      definirJustificacao(null);
       avisar();
       return Promise.resolve({ error: null });
     }
@@ -196,15 +252,11 @@ export const supabase = {
       }
       const tarefa = estado.pm_tasks.find((t) => t.id === p_task);
       if (!tarefa) return Promise.resolve({ error: { message: "Tarefa não encontrada." } });
-      const antigo = tarefa.custo_previsto;
-      estado.pm_tasks = estado.pm_tasks.map((t) => t.id === p_task
-        ? { ...t, custo_previsto: p_valor, tem_custo: p_valor != null }
-        : t);
-      estado.pm_comments = [...estado.pm_comments, {
-        id: novoId(), task_id: p_task, autor_id: "u1", tipo: "orcamento",
-        texto: p_justificacao, de_valor: antigo, para_valor: p_valor,
-        criado_em: new Date().toISOString()
-      }];
+      const depois2 = { ...tarefa, custo_previsto: p_valor, tem_custo: p_valor != null };
+      estado.pm_tasks = estado.pm_tasks.map((t) => t.id === p_task ? depois2 : t);
+      definirJustificacao(p_justificacao);
+      registarCampos(tarefa, depois2);
+      definirJustificacao(null);
       avisar();
       return Promise.resolve({ error: null });
     }

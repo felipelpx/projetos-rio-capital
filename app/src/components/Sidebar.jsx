@@ -249,7 +249,12 @@ export default function Sidebar({
             <p className="hintline">
               <b>Super admin</b>: {NIVEIS_EXPLICACAO.admin}{" "}
               <b>Editor</b>: {NIVEIS_EXPLICACAO.interact}{" "}
+              <b>Editor parcial</b>: {NIVEIS_EXPLICACAO.contrib}{" "}
               <b>Visualizador</b>: {NIVEIS_EXPLICACAO.view}
+            </p>
+            <p className="hintline">
+              Uma data ou um orçamento por marcar preenche-se sem cerimónia. Alterar o que já lá
+              está é de super admin, e leva justificação, que fica nos comentários da tarefa.
             </p>
             <p className="hintline">
               {acesso?.role === "admin"

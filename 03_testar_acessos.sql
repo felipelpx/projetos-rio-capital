@@ -6,7 +6,7 @@
 -- consegue fazer, e apaga-se a si próprio no fim.
 --
 -- Cada bloco imprime "OK" ou "FALHA". Se aparecer uma FALHA, não avançar.
--- São 29 verificações, sobre os quatro papéis.
+-- São 35 verificações, sobre os quatro papéis.
 --
 -- Em Supabase corre-se tudo de uma vez (Run). O `set request.jwt.claim.sub`
 -- finge que somos cada um dos utilizadores.
@@ -129,10 +129,34 @@ begin
   begin
     update public.pm_tasks set fim = current_date + 99 where id = v_task;
     n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Editor parcial NÃO mexe em datas', 'FALHA — mexeu');
+    values (n, 'Editor parcial NÃO altera datas já marcadas', 'FALHA — mexeu');
   exception when others then
     n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Editor parcial NÃO mexe em datas', 'OK');
+    values (n, 'Editor parcial NÃO altera datas já marcadas', 'OK');
+  end;
+
+  begin
+    insert into public.pm_tasks (titulo, status_id, inicio, fim)
+    values ('__datas_parcial__', (select id from public.pm_statuses order by posicao limit 1),
+            current_date, current_date + 5);
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor parcial marca datas ao criar a tarefa',
+            case when exists (select 1 from public.pm_tasks
+                               where titulo = '__datas_parcial__' and fim = current_date + 5)
+                 then 'OK' else 'FALHA — não gravou' end);
+  exception when others then
+    get stacked diagnostics v_erro = message_text;
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor parcial marca datas ao criar a tarefa', 'FALHA — ' || left(v_erro, 40));
+  end;
+
+  begin
+    update public.pm_tasks set fim = current_date + 9 where titulo = '__datas_parcial__';
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor parcial NÃO volta atrás na data que pôs', 'FALHA — mexeu');
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor parcial NÃO volta atrás na data que pôs', 'OK');
   end;
 
   begin
@@ -208,32 +232,10 @@ begin
   begin
     perform public.pm_alterar_datas(v_task, current_date, current_date + 20, 'obra atrasou-se');
     n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Editor muda o fim real, com justificação',
-            case when (select fim from public.pm_tasks where id = v_task) = current_date + 20
-                 then 'OK' else 'FALHA — a data não mudou' end);
-  exception when others then
-    get stacked diagnostics v_erro = message_text;
-    n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Editor muda o fim real, com justificação', 'FALHA — ' || left(v_erro, 40));
-  end;
-
-  begin
-    perform public.pm_alterar_datas(v_task, current_date, current_date + 25, '   ');
-    n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Data SEM justificação é recusada', 'FALHA — passou');
+    values (n, 'Editor NÃO altera datas, nem com justificação', 'FALHA — alterou');
   exception when others then
     n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Data SEM justificação é recusada', 'OK');
-  end;
-
-  begin
-    n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'A mudança de data deixou registo',
-            case when exists (select 1 from public.pm_comments
-                               where task_id = v_task and tipo = 'datas' and campo = 'fim'
-                                 and para_data = current_date + 20
-                                 and texto = 'obra atrasou-se')
-                 then 'OK' else 'FALHA — sem registo' end);
+    values (n, 'Editor NÃO altera datas, nem com justificação', 'OK');
   end;
 
   begin
@@ -306,6 +308,37 @@ begin
   perform set_config('request.jwt.claim.sub', v_super::text, true);
 
   begin
+    perform public.pm_alterar_datas(v_task, current_date, current_date + 20, 'obra atrasou-se');
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Super admin altera o fim real, com justificação',
+            case when (select fim from public.pm_tasks where id = v_task) = current_date + 20
+                 then 'OK' else 'FALHA — a data não mudou' end);
+  exception when others then
+    get stacked diagnostics v_erro = message_text;
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Super admin altera o fim real, com justificação', 'FALHA — ' || left(v_erro, 40));
+  end;
+
+  begin
+    perform public.pm_alterar_datas(v_task, current_date, current_date + 25, '   ');
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Data SEM justificação é recusada', 'FALHA — passou');
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Data SEM justificação é recusada', 'OK');
+  end;
+
+  begin
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'A mudança de data deixou registo',
+            case when exists (select 1 from public.pm_task_log
+                               where task_id = v_task and tipo = 'campo' and campo = 'fim'
+                                 and para = (current_date + 20)::text
+                                 and texto = 'obra atrasou-se')
+                 then 'OK' else 'FALHA — sem registo' end);
+  end;
+
+  begin
     perform public.pm_definir_orcamento(v_task, 2500, 'empreiteiro reviu o preço');
     n := n + 1; insert into _res (ordem, o_que, resultado)
     values (n, 'Super admin altera o orçamento',
@@ -329,9 +362,9 @@ begin
   begin
     n := n + 1; insert into _res (ordem, o_que, resultado)
     values (n, 'A alteração do orçamento deixou registo',
-            case when exists (select 1 from public.pm_comments
-                               where task_id = v_task and tipo = 'orcamento'
-                                 and de_valor = 1000 and para_valor = 2500)
+            case when exists (select 1 from public.pm_task_log
+                               where task_id = v_task and tipo = 'campo' and campo = 'custo_previsto'
+                                 and de like '1000%' and para like '2500%')
                  then 'OK' else 'FALHA — sem registo' end);
   end;
 
@@ -366,10 +399,46 @@ begin
 
   -- o registo do replaneamento ficou?
   select exists (
-    select 1 from public.pm_comments
-    where task_id = v_task and tipo = 'replaneamento'
+    select 1 from public.pm_task_log
+    where task_id = v_task and tipo = 'campo' and campo = 'fim_previsto'
+      and texto = 'replaneamento de teste'
   ) into v_ok;
-  n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'A reposição deixou registo nos comentários', case when v_ok then 'OK' else 'FALHA' end);
+  n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'A reposição deixou registo no histórico', case when v_ok then 'OK' else 'FALHA' end);
+
+  -- e o histórico apanha o que ninguém mandou apanhar: um título mudado à mão
+  begin
+    update public.pm_tasks set titulo = '__renomeada__' where id = v_task;
+    select exists (
+      select 1 from public.pm_task_log
+      where task_id = v_task and tipo = 'campo' and campo = 'titulo' and para = '__renomeada__'
+    ) into v_ok;
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'O histórico apanha alterações comuns', case when v_ok then 'OK' else 'FALHA — sem registo' end);
+  end;
+
+  -- ninguém escreve no histórico à mão, nem o super admin
+  begin
+    insert into public.pm_task_log (task_id, autor_id, tipo, texto)
+    values (v_task, v_super, 'campo', 'inventado');
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Ninguém escreve no histórico à mão', 'FALHA — escreveu');
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Ninguém escreve no histórico à mão', 'OK');
+  end;
+
+  begin
+    delete from public.pm_task_log where task_id = v_task;
+    if found then
+      n := n + 1; insert into _res (ordem, o_que, resultado)
+      values (n, 'Ninguém apaga o histórico', 'FALHA — apagou');
+    else
+      n := n + 1; insert into _res (ordem, o_que, resultado)
+      values (n, 'Ninguém apaga o histórico', 'OK');
+    end if;
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Ninguém apaga o histórico', 'OK');
+  end;
 
   perform set_config('request.jwt.claim.sub', '', true);
 end $$;

@@ -70,6 +70,7 @@ export default function Harness() {
   ), [base, filtros]);
 
   const comentarios = useMemo(() => ler("pm_comments"), [versao]);
+  const registo = useMemo(() => ler("pm_task_log"), [versao]);
   const anexos = useMemo(() => ler("pm_attachments"), [versao]);
 
   const [erro, setErro] = useState("");
@@ -105,10 +106,13 @@ export default function Harness() {
     if (!antes) return { ok: false };
     const inicio = novas.inicio !== undefined ? novas.inicio : antes.inicio;
     const fim = novas.fim !== undefined ? novas.fim : antes.fim;
-    const primeira = antes.inicio == null && antes.fim == null;
+    /* Igual ao useBoard: só preencheu se tudo o que mexeu estava vazio antes. */
+    const soPreencheu =
+      (inicio === antes.inicio || antes.inicio == null) &&
+      (fim === antes.fim || antes.fim == null);
     const adiou = fim && (!antes.fim || fim > antes.fim);
 
-    const r = primeira
+    const r = soPreencheu
       ? await supabase.from("pm_tasks").update({ inicio, fim }).eq("id", id)
       : await supabase.rpc("pm_alterar_datas", {
           p_task: id, p_inicio: inicio, p_fim: fim,
@@ -145,7 +149,7 @@ export default function Harness() {
 
   const ctx = {
     base, listaFiltrada, tasks, statuses: F.statuses, projects, pessoas: F.pessoas,
-    comments: comentarios, attachments: anexos, hoje, podeEscrever: podeEscreverCom(papel), podeCriar: podeCriarCom(papel),
+    comments: comentarios, historico: registo, attachments: anexos, hoje, podeEscrever: podeEscreverCom(papel), podeCriar: podeCriarCom(papel),
     podeComentar: podeComentarCom(papel), souAdmin: papel === "admin",
     filtros, setFiltros, abertoMulti, setAbertoMulti, filtroProjetos,
     itensEstado, itensPrioridade, itensSetor, itensPessoa, fotos,

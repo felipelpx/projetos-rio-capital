@@ -4,6 +4,7 @@ import { Avatar } from "./Bits.jsx";
 import { fmtShort, dias } from "../lib/dates.js";
 import { fmtSize, fmtWhen, PRIORIDADES, SETORES, eur } from "../lib/format.js";
 import { slipDays, earliestStart, depViolated, wouldCycle } from "../lib/schedule.js";
+import { descrever } from "../lib/historico.js";
 
 const BUCKET = "pm-anexos";
 
@@ -25,7 +26,7 @@ function CampoLento({ valor, onGuardar, textarea, ...props }) {
 
 export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
   const {
-    tasks, statuses, projects, pessoas, comments, attachments,
+    tasks, statuses, projects, pessoas, comments, historico = [], attachments,
     podeEscrever,   // datas, dependências, apagar — editor e super admin
     podeCriar,      // criar e alterar tarefas — editor parcial para cima
     podeComentar,   // toda a gente com acesso, incluindo o visualizador
@@ -48,6 +49,9 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
   const [orcPorque, setOrcPorque] = useState("");
   const [erroOrc, setErroOrc] = useState("");
   const [comentario, setComentario] = useState("");
+  const [aEditar, setAEditar] = useState(null);      // id do comentário a editar
+  const [textoEdit, setTextoEdit] = useState("");
+  const [histAberto, setHistAberto] = useState(false);
   const ficheiro = useRef(null);
 
   useEffect(() => {
@@ -55,6 +59,7 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
     setPorque(""); setErroRebase(false); setMsgAnexo(""); setComentario("");
     setMudarOrc(false); setOrcNovo(""); setOrcPorque(""); setErroOrc("");
     setMudarData(null); setDataPorque(""); setErroData("");
+    setAEditar(null); setTextoEdit(""); setHistAberto(false);
   }, [tarefaId]);
 
   useEffect(() => {
@@ -67,6 +72,16 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
     () => comments.filter((c) => c.task_id === tarefaId),
     [comments, tarefaId]
   );
+  /* Do mais recente para o mais antigo: quem abre o histórico quer saber o que
+     aconteceu agora, não o que aconteceu no primeiro dia. */
+  const meuHistorico = useMemo(
+    () => historico
+      .filter((l) => l.task_id === tarefaId)
+      .slice()
+      .sort((a, b) => String(b.criado_em).localeCompare(String(a.criado_em))),
+    [historico, tarefaId]
+  );
+
   const meusAnexos = useMemo(
     () => attachments.filter((a) => a.task_id === tarefaId),
     [attachments, tarefaId]
@@ -79,17 +94,20 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
   const sd = slipDays(t);
   const cedo = earliestStart(t, tasks);
   const arrancaCedoDemais = t.deps.some((d) => depViolated(t, d, tasks));
-  const reposicoes = meusComentarios.filter((c) => c.tipo === "replaneamento").length;
-  const mexidasOrc = meusComentarios.filter((c) => c.tipo === "orcamento").length;
+  const reposicoes = meuHistorico.filter((l) => l.campo === "fim_previsto").length;
+  const mexidasOrc = meuHistorico.filter((l) => l.campo === "custo_previsto").length;
   const temOrcamento = t.custo_previsto != null;
 
   const patch = (campos) => patchTarefa(t.id, campos);
 
-  /* Marcar a primeira data é preencher: vai direto. Mexer numa que já lá
-     estava muda o plano de toda a gente, e aí pergunta-se porquê antes de
-     gravar — é o que fica no histórico quando alguém quiser perceber a
-     derrapagem daqui a seis meses. */
-  const primeiraData = t.inicio == null && t.fim == null;
+  /* Marcar uma data vazia é planear: qualquer editor a põe, sem cerimónia.
+     Mexer numa que já lá estava muda o plano de toda a gente — é de super
+     admin, e pergunta-se porquê antes de gravar. É o que fica no histórico
+     quando alguém quiser perceber a derrapagem daqui a seis meses. */
+  const podeMexerNaData = (campo) => {
+    if (!podeCriar) return false;
+    return t[campo] == null || souAdmin;
+  };
 
   function novasDatas(campo, valor) {
     const d = { inicio: t.inicio, fim: t.fim, [campo]: valor || null };
@@ -99,7 +117,22 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
   }
 
   async function pedirData(campo, valor) {
-    if (primeiraData) { await alterarDatas(t.id, novasDatas(campo, valor), null); return; }
+    const outro = campo === "inicio" ? "fim" : "inicio";
+    const d = novasDatas(campo, valor);
+    /* Preencher uma data vazia não pode servir de atalho para arrastar a
+       outra, que já estava marcada — isso é uma alteração. */
+    if (!souAdmin && t[outro] != null && d[outro] !== t[outro]) {
+      setErroData(campo === "inicio"
+        ? "Esse início é depois do fim já marcado. Só um super admin pode mexer no fim."
+        : "Esse fim é antes do início já marcado. Só um super admin pode mexer no início.");
+      setMudarData(null);
+      return;
+    }
+    if (t[campo] == null) {
+      setErroData("");
+      await alterarDatas(t.id, d, null);
+      return;
+    }
     setMudarData({ campo, valor });
     setDataPorque("");
     setErroData("");
@@ -140,6 +173,19 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
       p_task: t.id, p_valor: v, p_justificacao: j
     }));
     if (r?.ok) { setMudarOrc(false); setOrcNovo(""); setOrcPorque(""); setErroOrc(""); }
+  }
+
+  async function guardarComentario(id) {
+    const txt = textoEdit.trim();
+    if (!txt) return;
+    const r = await guardar(() =>
+      supabase.from("pm_comments")
+        .update({ texto: txt, editado_em: new Date().toISOString() }).eq("id", id));
+    if (r?.ok) { setAEditar(null); setTextoEdit(""); }
+  }
+
+  async function apagarComentario(id) {
+    await guardar(() => supabase.from("pm_comments").delete().eq("id", id));
   }
 
   async function juntarDependencia(id) {
@@ -281,16 +327,18 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
           <div className="frow">
             <div className="fgroup">
               <label htmlFor="d-inicio">Início</label>
-              <input className="field" id="d-inicio" type="date" disabled={!podeEscrever}
+              <input className="field" id="d-inicio" type="date" disabled={!podeMexerNaData("inicio")}
                 value={mudarData?.campo === "inicio" ? mudarData.valor : (t.inicio || "")}
                 onChange={(e) => pedirData("inicio", e.target.value)} />
-              {podeCriar && !podeEscrever && (
-                <span className="co-note">O teu acesso não permite alterar datas.</span>
-              )}
+              {!podeCriar ? (
+                <span className="co-note">O teu acesso não permite definir datas.</span>
+              ) : t.inicio != null && !souAdmin ? (
+                <span className="co-note">Marcada. Só um super admin a pode alterar.</span>
+              ) : null}
             </div>
             <div className="fgroup">
               <label htmlFor="d-fim">Fim (real)</label>
-              <input className="field" id="d-fim" type="date" disabled={!podeEscrever}
+              <input className="field" id="d-fim" type="date" disabled={!podeMexerNaData("fim")}
                 value={mudarData?.campo === "fim" ? mudarData.valor : (t.fim || "")}
                 onChange={(e) => pedirData("fim", e.target.value)} />
 
@@ -309,7 +357,7 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
               {t.fim_previsto && t.fim && sd !== 0 && !rebase && (
                 souAdmin ? (
                   <button className="linkbtn" onClick={() => setRebase(true)}>Repor data prevista</button>
-                ) : podeEscrever ? (
+                ) : podeCriar ? (
                   <span className="co-note">
                     Só um super admin pode repor a data prevista, com justificação.
                   </span>
@@ -335,6 +383,12 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
               )}
             </div>
           </div>
+
+          {/* Recusa antes de chegar ao servidor: preencher uma data vazia não
+              pode arrastar a outra, que já estava marcada. */}
+          {!mudarData && erroData && (
+            <p className="hintline warnnote" style={{ marginTop: -6 }}>{erroData}</p>
+          )}
 
           {mudarData && (
             <div className="rebaseform">
@@ -607,66 +661,7 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
                 {meusComentarios.map((c) => {
                   const autor = pessoas.find((p) => p.id === c.autor_id);
                   const nome = autor?.nome || "Alguém";
-                  if (c.tipo === "datas") {
-                    return (
-                      <div className="cm log" key={c.id}>
-                        <span className="cm-av" style={{ background: autor?.color || "#7C8B99" }}>
-                          {nome.slice(0, 1).toUpperCase()}
-                        </span>
-                        <div className="cm-main">
-                          <div className="cm-head">
-                            <span className="cm-tag">{c.campo === "inicio" ? "Início" : "Fim"}</span>
-                            <span className="cm-who">{nome}</span>
-                            <span className="cm-when">{fmtWhen(c.criado_em)}</span>
-                          </div>
-                          <p className="cm-move">
-                            {fmtShort(c.de_data) || "sem data"} → {fmtShort(c.para_data) || "sem data"}
-                          </p>
-                          <p className="cm-text">{c.texto}</p>
-                        </div>
-                      </div>
-                    );
-                  }
-                  if (c.tipo === "orcamento") {
-                    return (
-                      <div className="cm log" key={c.id}>
-                        <span className="cm-av" style={{ background: autor?.color || "#7C8B99" }}>
-                          {nome.slice(0, 1).toUpperCase()}
-                        </span>
-                        <div className="cm-main">
-                          <div className="cm-head">
-                            <span className="cm-tag">Orçamento</span>
-                            <span className="cm-who">{nome}</span>
-                            <span className="cm-when">{fmtWhen(c.criado_em)}</span>
-                          </div>
-                          <p className="cm-move">
-                            {eur(c.de_valor)} → {c.para_valor == null ? "sem orçamento" : eur(c.para_valor)}
-                          </p>
-                          <p className="cm-text">{c.texto}</p>
-                        </div>
-                      </div>
-                    );
-                  }
-                  if (c.tipo === "replaneamento") {
-                    return (
-                      <div className="cm log" key={c.id}>
-                        <span className="cm-av" style={{ background: autor?.color || "#7C8B99" }}>
-                          {nome.slice(0, 1).toUpperCase()}
-                        </span>
-                        <div className="cm-main">
-                          <div className="cm-head">
-                            <span className="cm-tag">Replaneamento</span>
-                            <span className="cm-who">{nome}</span>
-                            <span className="cm-when">{fmtWhen(c.criado_em)}</span>
-                          </div>
-                          <p className="cm-move">
-                            Fim previsto: {fmtShort(c.de_data)} → {fmtShort(c.para_data)}
-                          </p>
-                          <p className="cm-text">{c.texto}</p>
-                        </div>
-                      </div>
-                    );
-                  }
+                  const meu = c.autor_id === sessaoUserId;
                   return (
                     <div className="cm" key={c.id}>
                       <span className="cm-av" style={{ background: autor?.color || "#7C8B99" }}>
@@ -675,9 +670,37 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
                       <div className="cm-main">
                         <div className="cm-head">
                           <span className="cm-who">{nome}</span>
-                          <span className="cm-when">{fmtWhen(c.criado_em)}</span>
+                          <span className="cm-when">
+                            {fmtWhen(c.criado_em)}
+                            {c.editado_em && <span className="cm-edit"> · editado</span>}
+                          </span>
+                          {/* Cada um mexe no que escreveu. O que lá estava antes
+                              não se perde: fica no histórico, em baixo. */}
+                          {meu && aEditar !== c.id && (
+                            <span className="cm-acoes">
+                              <button className="linkbtn" onClick={() => {
+                                setAEditar(c.id); setTextoEdit(c.texto);
+                              }}>Editar</button>
+                              <button className="linkbtn" onClick={() => apagarComentario(c.id)}>
+                                Apagar
+                              </button>
+                            </span>
+                          )}
                         </div>
-                        <p className="cm-text">{c.texto}</p>
+                        {aEditar === c.id ? (
+                          <div className="composer">
+                            <textarea className="field" rows="2" value={textoEdit}
+                              aria-label="Editar comentário"
+                              onChange={(e) => setTextoEdit(e.target.value)} />
+                            <div className="row-end">
+                              <button className="btn btn-sm" onClick={() => setAEditar(null)}>Cancelar</button>
+                              <button className="btn btn-sm btn-primary"
+                                onClick={() => guardarComentario(c.id)}>Guardar</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="cm-text">{c.texto}</p>
+                        )}
                       </div>
                     </div>
                   );
@@ -696,6 +719,48 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
                   <button className="btn btn-sm btn-primary" onClick={comentar}>Comentar</button>
                 </div>
               </div>
+            )}
+          </div>
+
+          {/* Histórico. Escrito pela base de dados, não por aqui: apanha
+              qualquer alteração, venha do ecrã ou de outro lado. */}
+          <div className="fgroup">
+            <label>Histórico de alterações</label>
+            {meuHistorico.length ? (
+              <>
+                <div className="hist">
+                  {(histAberto ? meuHistorico : meuHistorico.slice(0, 8)).map((l) => {
+                    const autor = pessoas.find((p) => p.id === l.autor_id);
+                    const d = descrever(l, { statuses, projects, pessoas, tasks });
+                    return (
+                      <div className="histrow" key={l.id}>
+                        <span className="hist-av" style={{ background: autor?.color || "#7C8B99" }}>
+                          {(autor?.nome || "?").slice(0, 1).toUpperCase()}
+                        </span>
+                        <div className="hist-main">
+                          <p className="hist-tit">
+                            {d.titulo}
+                            {d.detalhe && <span className="hist-val"> {d.detalhe}</span>}
+                          </p>
+                          <p className="hist-pe">
+                            {autor?.nome || "Alguém"} · {fmtWhen(l.criado_em)}
+                          </p>
+                          {l.texto && l.tipo === "campo" && <p className="hist-just">{l.texto}</p>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {meuHistorico.length > 8 && (
+                  <button className="linkbtn" onClick={() => setHistAberto(!histAberto)}>
+                    {histAberto
+                      ? "Mostrar só as últimas 8"
+                      : `Ver as ${meuHistorico.length} alterações`}
+                  </button>
+                )}
+              </>
+            ) : (
+              <p className="cm-empty">Ainda sem alterações registadas.</p>
             )}
           </div>
         </div>
