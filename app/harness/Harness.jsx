@@ -38,7 +38,7 @@ export default function Harness() {
         setFotos(m);
       });
   }, [caminhosFoto]);
-  const tasks = useMemo(() => {
+  const todas = useMemo(() => {
     const assignees = ler("pm_task_assignees");
     const deps = ler("pm_task_deps");
     return ler("pm_tasks").map((t) => ({
@@ -47,6 +47,19 @@ export default function Harness() {
       deps: deps.filter((d) => d.task_id === t.id)
     }));
   }, [versao]);
+  const tasks = useMemo(() => todas.filter((t) => !t.apagada_em), [todas]);
+  const apagadas = useMemo(() => todas.filter((t) => t.apagada_em), [todas]);
+
+  const apagarTarefa = useCallback(async (id, j) => {
+    const r = await supabase.rpc("pm_apagar_tarefa", { p_task: id, p_justificacao: j });
+    if (r?.error) { setErro(r.error.message); return { ok: false, erro: r.error.message }; }
+    setErro(""); return { ok: true };
+  }, []);
+  const reporTarefa = useCallback(async (id) => {
+    const r = await supabase.rpc("pm_repor_tarefa", { p_task: id });
+    if (r?.error) { setErro(r.error.message); return { ok: false, erro: r.error.message }; }
+    setErro(""); return { ok: true };
+  }, []);
   const [vista, setVista] = useState("quadro");
   const [filtroProjetos, setFiltroProjetos] = useState(null);
   const [filtros, setFiltros] = useState({ estados: null, prioridades: null, setores: null, pessoas: null });
@@ -162,7 +175,7 @@ export default function Harness() {
       const p = tasks.find((x) => x.id === d.depende_de);
       return p && !F.statuses.find((s) => s.id === p.status_id)?.conta_concluido;
     }),
-    onAbrir: setAberta, patchTarefa, alterarDatas,
+    onAbrir: setAberta, patchTarefa, alterarDatas, apagarTarefa, reporTarefa, apagadas,
     guardar, recarregar: () => {}, sessaoUserId: "u1"
   };
 
@@ -201,7 +214,7 @@ export default function Harness() {
           valor={filtros.pessoas} onChange={(v) => setFiltros({ ...filtros, pessoas: v })}
           aberto={abertoMulti === "top"} onAbrir={(a) => setAbertoMulti(a ? "top" : null)} />
         {podeCriarCom(papel) && (
-          <button className="btn btn-primary" onClick={() => setACriar({ statusId: null, projectId: null })}>Nova tarefa</button>
+          <button className="btn btn-primary" onClick={() => setACriar({ statusId: null, projectId: filtroProjetos?.length === 1 ? filtroProjetos[0] : null })}>Nova tarefa</button>
         )}
         <Conta email="juliana@riocapital.pt" papel={papel} />
       </header>
@@ -219,13 +232,14 @@ export default function Harness() {
         </span>
       </div>
       <div className="main">
-        <Sidebar projects={projects} empresas={empresas} tasks={tasks} statuses={F.statuses} pessoas={F.pessoas}
+        <Sidebar projects={projects} empresas={empresas} tasks={tasks} apagadas={apagadas}
+          reporTarefa={reporTarefa} onAbrir={setAberta} statuses={F.statuses} pessoas={F.pessoas}
           acesso={{ role: papel }} filtroProjetos={filtroProjetos} setFiltroProjetos={setFiltroProjetos}
           podeCriar={podeCriarCom(papel)} podeEscrever={podeEscreverCom(papel)}
           sessaoUserId="u1" recarregar={() => {}} guardar={guardar} />
         <div className="content">
-          {vista === "quadro" && <Board ctx={ctx} criarTarefa={(a, b) => setACriar({ statusId: a ?? null, projectId: b ?? null })} />}
-          {vista === "projetos" && <ProjectBoard ctx={ctx} criarTarefa={(a, b) => setACriar({ statusId: a ?? null, projectId: b ?? null })} />}
+          {vista === "quadro" && <Board ctx={ctx} criarTarefa={(a, b) => setACriar({ statusId: a ?? null, projectId: b ?? (filtroProjetos?.length === 1 ? filtroProjetos[0] : null) })} />}
+          {vista === "projetos" && <ProjectBoard ctx={ctx} criarTarefa={(a, b) => setACriar({ statusId: a ?? null, projectId: b ?? (filtroProjetos?.length === 1 ? filtroProjetos[0] : null) })} />}
           {vista === "gantt" && <Gantt ctx={ctx} onAjustar={ajustar} />}
           {vista === "lista" && <TaskList ctx={ctx} />}
           {vista === "alertas" && <Alerts ctx={ctx} />}

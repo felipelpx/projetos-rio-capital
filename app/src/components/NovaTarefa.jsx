@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { supabase } from "../lib/supabase.js";
 import { PRIORIDADES, SETORES } from "../lib/format.js";
+import { earliestStart } from "../lib/schedule.js";
+import { parseD, toISO, addDays, dayDelta, fmtShort } from "../lib/dates.js";
 
 /**
  * Criar uma tarefa de uma vez só.
@@ -29,6 +31,8 @@ export default function NovaTarefa({ ctx, statusId, projectId, onFechar }) {
   const [orcamento, setOrcamento] = useState("");
   const [orcPorque, setOrcPorque] = useState("");
   const [responsaveis, setResponsaveis] = useState([]);
+  const [deps, setDeps] = useState([]);        // [{ id, dias_espera }]
+  const [depEscolha, setDepEscolha] = useState("");
   const [notas, setNotas] = useState("");
   const [erro, setErro] = useState("");
   const [aGravar, setAGravar] = useState(false);
@@ -43,12 +47,54 @@ export default function NovaTarefa({ ctx, statusId, projectId, onFechar }) {
   const alternar = (id) =>
     setResponsaveis((r) => r.includes(id) ? r.filter((x) => x !== id) : [...r, id]);
 
+  /* Candidatas a antecessoras: as do projeto escolhido primeiro, que é onde
+     estão quase sempre, e as restantes a seguir. Não há ciclos a temer — uma
+     tarefa que ainda não existe não pode ter dependentes. */
+  const candidatas = [...tasks]
+    .filter((x) => !deps.some((d) => d.id === x.id))
+    .sort((a, bb) =>
+      (a.project_id === projeto ? 0 : 1) - (bb.project_id === projeto ? 0 : 1) ||
+      String(a.titulo).localeCompare(String(bb.titulo), "pt", { sensitivity: "base" }));
+
+  /* O arranque mais cedo que as antecessoras escolhidas permitem. */
+  const arranqueMinimo = () => {
+    if (!deps.length) return null;
+    return earliestStart(
+      { deps: deps.map((d) => ({ depende_de: d.id, dias_espera: d.dias_espera })) },
+      tasks
+    );
+  };
+
+  /* Se o início escrito for cedo demais, a tarefa é empurrada — e a duração
+     mantém-se, por isso o fim anda o mesmo número de dias. */
+  const comEmpurrao = (ini, f) => {
+    const cedo = arranqueMinimo();
+    if (!cedo || !ini || ini >= cedo) return { inicio: ini, fim: f, empurrou: 0 };
+    const dias = dayDelta(parseD(ini), parseD(cedo));
+    return {
+      inicio: cedo,
+      fim: f ? toISO(addDays(parseD(f), dias)) : f,
+      empurrou: dias
+    };
+  };
+
+  const juntarDep = () => {
+    if (!depEscolha) return;
+    setDeps((d) => [...d, { id: depEscolha, dias_espera: 0 }]);
+    setDepEscolha("");
+  };
+  const mudarEspera = (id, v) => {
+    const n = Math.max(0, Math.min(365, parseInt(v, 10) || 0));
+    setDeps((d) => d.map((x) => x.id === id ? { ...x, dias_espera: n } : x));
+  };
+
   async function submeter(e) {
     e.preventDefault();
     const nome = titulo.trim();
     if (!nome) { setErro("A tarefa precisa de um título."); return; }
     if (inicio && fim && fim < inicio) { setErro("O fim não pode ser antes do início."); return; }
 
+    const ajustado = comEmpurrao(inicio || null, fim || null);
     const valor = temCusto ? lerValor(orcamento) : null;
     if (Number.isNaN(valor)) { setErro("O orçamento não é um número. Escreve, por exemplo, 12 450."); return; }
     if (valor != null && !orcPorque.trim()) {
@@ -67,8 +113,8 @@ export default function NovaTarefa({ ctx, statusId, projectId, onFechar }) {
         status_id: estado,
         prioridade,
         setor: setor || null,
-        inicio: inicio || null,
-        fim: fim || null,
+        inicio: ajustado.inicio,
+        fim: ajustado.fim,
         tem_custo: temCusto,
         notas: notas.trim(),
         posicao: maior + 1000
@@ -80,6 +126,11 @@ export default function NovaTarefa({ ctx, statusId, projectId, onFechar }) {
         const a = await supabase.from("pm_task_assignees")
           .insert(responsaveis.map((u) => ({ task_id: id, user_id: u })));
         if (a.error) return a;
+      }
+      if (deps.length) {
+        const dd = await supabase.from("pm_task_deps").insert(
+          deps.map((d) => ({ task_id: id, depende_de: d.id, dias_espera: d.dias_espera })));
+        if (dd.error) return dd;
       }
       /* O orçamento entra pela função, que exige a razão e deixa registo —
          é a mesma porta por onde passa qualquer euro. */
@@ -194,6 +245,63 @@ export default function NovaTarefa({ ctx, statusId, projectId, onFechar }) {
                 )}
               </>
             )}
+          </div>
+
+          <div className="fgroup">
+            <label>Depende de</label>
+            {deps.length > 0 && (
+              <div className="novadeps">
+                {deps.map((d) => {
+                  const alvo = tasks.find((x) => x.id === d.id);
+                  return (
+                    <div className="novadep" key={d.id}>
+                      <span className="depnome">{alvo?.titulo || "Tarefa"}</span>
+                      <label className="depespera">
+                        espera
+                        <input className="field laginp" type="number" min="0" max="365"
+                          value={d.dias_espera} aria-label={"Dias de espera depois de " + (alvo?.titulo || "")}
+                          onChange={(e) => mudarEspera(d.id, e.target.value)} />
+                        dias
+                      </label>
+                      <button type="button" className="icon-btn" aria-label="Tirar dependência"
+                        onClick={() => setDeps((x) => x.filter((y) => y.id !== d.id))}>✕</button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="deppick">
+              <select className="field" value={depEscolha} aria-label="Escolher antecessora"
+                onChange={(e) => setDepEscolha(e.target.value)}>
+                <option value="">Escolhe uma tarefa…</option>
+                {candidatas.map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.titulo || "Sem título"}
+                    {x.project_id !== projeto && projects.find((pp) => pp.id === x.project_id)
+                      ? " — " + projects.find((pp) => pp.id === x.project_id).nome
+                      : ""}
+                  </option>
+                ))}
+              </select>
+              <button type="button" className="btn btn-sm" disabled={!depEscolha} onClick={juntarDep}>
+                Juntar
+              </button>
+            </div>
+            <p className="hintline">
+              Esta tarefa só arranca depois de as escolhidas acabarem. A espera são os dias que
+              têm de passar entre o fim de uma e o arranque desta.
+            </p>
+            {(() => {
+              const aj = comEmpurrao(inicio || null, fim || null);
+              if (!aj.empurrou) return null;
+              return (
+                <p className="hintline warnnote">
+                  Com estas dependências a tarefa não pode arrancar a {fmtShort(inicio)}:
+                  passa para <b>{fmtShort(aj.inicio)}</b>
+                  {aj.fim && <> e o fim para <b>{fmtShort(aj.fim)}</b></>}, mantendo a duração.
+                </p>
+              );
+            })()}
           </div>
 
           <div className="fgroup">

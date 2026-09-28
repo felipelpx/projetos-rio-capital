@@ -2,7 +2,7 @@ import { useState } from "react";
 import FiltroBar from "./FiltroBar.jsx";
 import { Avatares, Vazio } from "./Bits.jsx";
 import { fmtShort } from "../lib/dates.js";
-import { slipDays, lateDays, lateStartDays } from "../lib/schedule.js";
+import { slipDays, lateDays, lateStartDays, fimEfetivo } from "../lib/schedule.js";
 import { PRIORIDADES, SETORES, eurCurto } from "../lib/format.js";
 
 const COLUNAS = [
@@ -124,7 +124,7 @@ export default function TaskList({ ctx }) {
                       {fmtShort(t.fim_previsto) || "—"}
                     </td>
                     <td className="mono" style={{ fontSize: 12, color: atraso ? "var(--crit)" : "var(--ink-2)" }}>
-                      {fmtShort(t.fim) || "—"}
+                      {fmtShort(fimEfetivo(t)) || "—"}
                       {atraso ? ` +${atraso}d` : ""}
                       {sd !== 0 && <span className={"slipnum" + (sd > 0 ? "" : " ok")}> {sd > 0 ? "+" : ""}{sd}</span>}
                     </td>

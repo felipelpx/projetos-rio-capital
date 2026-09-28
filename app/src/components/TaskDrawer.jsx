@@ -74,10 +74,12 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
     podeEscrever,   // datas, dependências, apagar — editor e super admin
     podeCriar,      // criar e alterar tarefas — editor parcial para cima
     podeComentar,   // toda a gente com acesso, incluindo o visualizador
-    souAdmin, patchTarefa, alterarDatas, guardar, recarregar, sessaoUserId, hoje
+    souAdmin, patchTarefa, alterarDatas, apagarTarefa, reporTarefa,
+    apagadas = [], guardar, recarregar, sessaoUserId, hoje
   } = ctx;
 
-  const t = tasks.find((x) => x.id === tarefaId);
+  /* Também se abre uma tarefa apagada, para ver o histórico dela. */
+  const t = tasks.find((x) => x.id === tarefaId) || apagadas.find((x) => x.id === tarefaId);
   const [picker, setPicker] = useState(false);
   const [depPicker, setDepPicker] = useState(false);
   const [procura, setProcura] = useState("");
@@ -96,6 +98,9 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
   const [aEditar, setAEditar] = useState(null);      // id do comentário a editar
   const [textoEdit, setTextoEdit] = useState("");
   const [histAberto, setHistAberto] = useState(false);
+  const [aApagar, setAApagar] = useState(false);
+  const [porqueApagar, setPorqueApagar] = useState("");
+  const [erroApagar, setErroApagar] = useState("");
   const ficheiro = useRef(null);
 
   useEffect(() => {
@@ -104,6 +109,7 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
     setMudarOrc(false); setOrcNovo(""); setOrcPorque(""); setErroOrc("");
     setMudarData(null); setDataPorque(""); setErroData("");
     setAEditar(null); setTextoEdit(""); setHistAberto(false);
+    setAApagar(false); setPorqueApagar(""); setErroApagar("");
   }, [tarefaId]);
 
   useEffect(() => {
@@ -229,6 +235,14 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
     if (r?.ok) { setMudarOrc(false); setOrcNovo(""); setOrcPorque(""); setErroOrc(""); }
   }
 
+  async function confirmarApagar() {
+    const j = porqueApagar.trim();
+    if (!j) { setErroApagar("Escreve porque é que a tarefa deixou de fazer sentido."); return; }
+    const r = await apagarTarefa(t.id, j);
+    if (r?.ok) onFechar();
+    else setErroApagar(r?.erro || "Não consegui apagar a tarefa.");
+  }
+
   async function guardarComentario(id) {
     const txt = textoEdit.trim();
     if (!txt) return;
@@ -321,6 +335,34 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
         </div>
 
         <div className="drawer-body">
+          {t.apagada_em && (
+            <p className="apagadanota">
+              <b>Tarefa apagada.</b> Fica fora do quadro, mas nada se perdeu — o histórico está
+              aqui em baixo.
+              {t.apagada_porque && <> Razão dada: “{t.apagada_porque}”.</>}
+            </p>
+          )}
+
+          {aApagar && (
+            <div className="rebaseform">
+              <p className="hintline">
+                A tarefa sai do quadro mas não é destruída: fica em <b>Tarefas apagadas</b>, na
+                barra lateral, com o histórico inteiro, e pode ser reposta.
+              </p>
+              <textarea className="field" rows="2" value={porqueApagar}
+                aria-label="Justificação para apagar"
+                placeholder="Porque é que esta tarefa deixou de fazer sentido? (obrigatório)"
+                onChange={(e) => { setPorqueApagar(e.target.value); setErroApagar(""); }} />
+              {erroApagar && <p className="hintline warnnote">{erroApagar}</p>}
+              <div className="row-end">
+                <button className="btn btn-sm" onClick={() => setAApagar(false)}>Cancelar</button>
+                <button className="btn btn-sm btn-danger" onClick={confirmarApagar}>
+                  Apagar e registar
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="fgroup">
             <label htmlFor="d-titulo">Título</label>
             <CampoLento id="d-titulo" valor={t.titulo} disabled={!podeCriar}
@@ -394,6 +436,12 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
                 valor={(mudarData ? mudarData.fim : t.fim) || ""}
                 onGuardar={(v) => pedirData("fim", v)} />
 
+              {t.concluida_em && (
+                <span className="co-note oknote">
+                  Concluída a {fmtShort(t.concluida_em)}. É esta a data que conta para o desvio
+                  e para onde a barra acaba no Gantt.
+                </span>
+              )}
               <span className={"co-note" + (sd > 0 ? " warnnote" : sd < 0 ? " oknote" : "")}>
                 {!t.fim_previsto
                   ? "A data prevista fixa-se na primeira vez que guardares um fim."
@@ -818,10 +866,18 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
         </div>
 
         <div className="drawer-foot">
-          {podeEscrever ? (
-            <button className="btn btn-danger btn-sm" onClick={async () => {
-              await guardar(() => supabase.from("pm_tasks").delete().eq("id", t.id));
-              onFechar();
+          {t.apagada_em ? (
+            podeEscrever ? (
+              <button className="btn btn-sm" onClick={async () => {
+                const r = await reporTarefa(t.id);
+                if (r?.ok) onFechar();
+              }}>Repor tarefa</button>
+            ) : (
+              <span className="hintline">Tarefa apagada.</span>
+            )
+          ) : podeEscrever ? (
+            <button className="btn btn-danger btn-sm" onClick={() => {
+              setAApagar(true); setPorqueApagar(""); setErroApagar("");
             }}>Apagar tarefa</button>
           ) : (
             <span className="hintline">

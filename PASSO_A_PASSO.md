@@ -124,6 +124,37 @@ ela teve ficam exatamente como estão, com o nome dela, que é o que interessa
 daqui a dois anos quando alguém for ver o que se passou. A empresa de um projeto
 escolhe-se no editor do projeto, e pode criar-se ali mesmo.
 
+**Dependências e o que liberta a tarefa seguinte.** Uma tarefa arranca no dia
+a seguir ao fim da antecessora, mais os dias de espera. Se a antecessora **já
+estiver concluída**, o que conta é o **dia real da conclusão**, não a data que
+tinha marcada — acabar antes do prazo liberta a seguinte mais cedo, e acabar
+depois empurra-a. Ao criar uma tarefa com dependências, as datas são empurradas
+logo no formulário, mantendo a duração que escreveste; o aviso diz para que
+dias vão passar antes de gravares.
+
+**Concluir fixa o dia.** Quando uma tarefa passa a um estado que conta como
+concluído, a aplicação grava o dia em que isso aconteceu. É essa data — e não o
+fim que estava marcado — que fecha a barra no Gantt, que aparece no cartão e na
+lista, e contra a qual se mede o desvio face ao previsto. Uma tarefa fechada a
+28 de setembro deixa de aparecer a correr até 8 de outubro só porque era essa a
+data marcada.
+
+A data de conclusão **não se edita**: é posta pelo servidor quando o estado
+muda, e mudar o fim planeado depois não lhe mexe. Reabrir a tarefa limpa-a, e
+fechá-la outra vez grava o novo dia.
+
+**Apagar uma tarefa não a destrói.** Pede a razão, e a tarefa sai do quadro
+para a secção **Tarefas apagadas**, na barra lateral: com quem a apagou, porquê,
+e o histórico inteiro. Clicando no nome abre-se a ficha e vê-se tudo o que lhe
+aconteceu; o botão **Repor** devolve-a ao quadro no estado em que estava. Uma
+tarefa apagada não conta em lado nenhum — nem no quadro, nem no Gantt, nem nos
+totais, nem nos alertas.
+
+Não há forma de destruir uma tarefa, nem para um super admin. A base de dados
+não tem sequer permissão de *delete* nessa tabela. Destruí-la levava o histórico
+dela atrás, e é o histórico que responde às perguntas que aparecem seis meses
+depois.
+
 **Histórico de alterações.** Cada tarefa tem, no fundo da ficha, um
 **Histórico de alterações** com tudo o que lhe aconteceu: título, estado,
 prioridade, setor, datas, orçamento, notas, responsáveis, dependências, anexos,
@@ -145,7 +176,9 @@ o histórico.
 
 **Criar uma tarefa.** O botão **Nova tarefa** (ou o *+ Adicionar tarefa* no fundo
 de cada coluna) abre um formulário: título, projeto, estado, prioridade, setor,
-datas, custo, responsáveis e notas. **Nada é gravado enquanto não carregares em
+datas, custo, **dependências**, responsáveis e notas. Se estiveres a ver um
+projeto só, ele vem já escolhido; o *+* de uma coluna traz o projeto dessa
+coluna. **Nada é gravado enquanto não carregares em
 Adicionar tarefa** — podes escolher uma data, mudar de ideias e escolher outra,
 que para a base de dados é tudo o primeiro preenchimento. Se desistires a meio,
 não fica nenhuma tarefa vazia para trás.

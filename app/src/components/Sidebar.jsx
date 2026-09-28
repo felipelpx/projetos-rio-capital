@@ -29,8 +29,9 @@ function agrupar(projects, empresas) {
 }
 
 export default function Sidebar({
-  projects, empresas = [], fotos = {}, tasks, statuses, pessoas, acesso, filtroProjetos, setFiltroProjetos, aberta,
-  podeCriar, podeEscrever, guardar, sessaoUserId, recarregar
+  projects, empresas = [], fotos = {}, tasks, apagadas = [], statuses, pessoas, acesso,
+  filtroProjetos, setFiltroProjetos, aberta, podeCriar, podeEscrever, guardar,
+  sessaoUserId, recarregar, reporTarefa, onAbrir
 }) {
   const [equipaAberta, setEquipaAberta] = useState(false);
   const [colunasAbertas, setColunasAbertas] = useState(false);
@@ -38,6 +39,7 @@ export default function Sidebar({
   const [aEditar, setAEditar] = useState(null);   // id do projeto, ou "__novo__"
   const [empresasAbertas, setEmpresasAbertas] = useState(false);
   const [empEditar, setEmpEditar] = useState(null); // id da empresa, ou "__nova__"
+  const [lixoAberto, setLixoAberto] = useState(false);
 
   /* Criar um projeto ou uma empresa: editor parcial para cima. Alterar o que já
      existe: só escrita completa — renomear muda-o para toda a gente. */
@@ -173,6 +175,46 @@ export default function Sidebar({
           )}
         </div>
       </section>
+
+      {apagadas.length > 0 && (
+        <section>
+          <div className="side-head">
+            <button className="sectoggle" aria-expanded={lixoAberto}
+              onClick={() => setLixoAberto(!lixoAberto)}>
+              <span className="chev" aria-hidden="true">▾</span>
+              <span className="eyebrow">Tarefas apagadas</span>
+              <span className="n">{apagadas.length}</span>
+            </button>
+          </div>
+          {lixoAberto && (
+            <div className="subbox">
+              {apagadas.map((t) => {
+                const proj = projects.find((p) => p.id === t.project_id);
+                const quem = pessoas.find((p) => p.id === t.apagada_por);
+                return (
+                  <div className="lixorow" key={t.id}>
+                    <button className="lixonome" onClick={() => onAbrir?.(t.id)}
+                      title="Abrir a tarefa e ver o histórico">
+                      {t.titulo || "Sem título"}
+                    </button>
+                    <span className="lixometa">
+                      {proj?.nome || "Sem projeto"} · apagada por {quem?.nome || "alguém"}
+                    </span>
+                    {t.apagada_porque && <span className="lixoporque">{t.apagada_porque}</span>}
+                    {podeEscrever && (
+                      <button className="linkbtn" onClick={() => reporTarefa?.(t.id)}>Repor</button>
+                    )}
+                  </div>
+                );
+              })}
+              <p className="hintline">
+                Nada é destruído: a tarefa e o histórico dela ficam guardados. Repor devolve-a
+                ao quadro, no estado em que estava.
+              </p>
+            </div>
+          )}
+        </section>
+      )}
 
       <section>
         <div className="side-head">

@@ -64,10 +64,10 @@ export default function App() {
 function Quadro({ session }) {
   const dados = useBoard(session);
   const {
-    projects, empresas, statuses, tasks, comments, historico, attachments, pessoas,
+    projects, empresas, statuses, tasks, apagadas, comments, historico, attachments, pessoas,
     carregado, erro, aviso, setAviso, setErro,
     podeEscrever, podeCriar, podeComentar, souAdmin,
-    patchTarefa, alterarDatas, guardar, recarregar, ajustarDependencias, acesso
+    patchTarefa, alterarDatas, apagarTarefa, reporTarefa, guardar, recarregar, ajustarDependencias, acesso
   } = dados;
 
   const [vista, setVista] = useState(() => localStorage.getItem("pm:vista") || "quadro");
@@ -152,10 +152,15 @@ function Quadro({ session }) {
   ], [pessoas, base]);
 
   /* Abrir o formulário, não criar a linha. A tarefa só passa a existir quando
-     a pessoa carregar em Adicionar tarefa, com tudo preenchido de uma vez. */
+     a pessoa carregar em Adicionar tarefa, com tudo preenchido de uma vez.
+     Com um único projeto filtrado, é esse que vem preenchido: estar a ver um
+     projeto e carregar em Nova tarefa quer dizer uma tarefa para ele. */
   const [aCriar, setACriar] = useState(null);   // { statusId, projectId }
-  const criarTarefa = useCallback(
-    (statusId = null, projectId = null) => setACriar({ statusId, projectId }), []);
+  const criarTarefa = useCallback((statusId = null, projectId = null) => {
+    const pid = projectId
+      ?? (filtroProjetos?.length === 1 ? filtroProjetos[0] : null);
+    setACriar({ statusId, projectId: pid });
+  }, [filtroProjetos]);
 
   const ajustar = useCallback(async (id, silencioso) => {
     const r = await ajustarDependencias(id ?? null);
@@ -163,12 +168,12 @@ function Quadro({ session }) {
   }, [ajustarDependencias]);
 
   const ctx = {
-    base, listaFiltrada, tasks, statuses, projects, pessoas, comments, historico, attachments,
+    base, listaFiltrada, tasks, apagadas, statuses, projects, pessoas, comments, historico, attachments,
     hoje, podeEscrever, podeCriar, podeComentar, souAdmin,
     filtros, setFiltros, abertoMulti, setAbertoMulti,
     filtroProjetos, itensEstado, itensPrioridade, itensSetor, itensPessoa, fotos,
     contarComentarios, contarAnexos, ordemEstado, bloqueada,
-    onAbrir: setAberta, patchTarefa, alterarDatas, guardar, recarregar,
+    onAbrir: setAberta, patchTarefa, alterarDatas, apagarTarefa, reporTarefa, guardar, recarregar,
     sessaoUserId: session.user.id
   };
 
@@ -243,7 +248,8 @@ function Quadro({ session }) {
 
       <div className="main">
         <Sidebar
-          projects={projects} empresas={empresas} fotos={fotos} tasks={tasks} statuses={statuses} pessoas={pessoas}
+          projects={projects} empresas={empresas} fotos={fotos} tasks={tasks} apagadas={apagadas}
+          reporTarefa={reporTarefa} onAbrir={setAberta} statuses={statuses} pessoas={pessoas}
           acesso={acesso} filtroProjetos={filtroProjetos} setFiltroProjetos={setFiltroProjetos}
           aberta={menuLateral} podeCriar={podeCriar} podeEscrever={podeEscrever}
           guardar={guardar} sessaoUserId={session.user.id} recarregar={recarregar}

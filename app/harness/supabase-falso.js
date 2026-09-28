@@ -154,6 +154,18 @@ export const supabase = {
               }
             }
             const antes = tabela === "pm_tasks" ? alvos.map((r) => ({ ...r })) : [];
+            /* O mesmo que o gatilho pm_marcar_conclusao. */
+            if (tabela === "pm_tasks" && "status_id" in campos) {
+              const feito = (id) => !!estado.pm_statuses.find((x) => x.id === id)?.conta_concluido;
+              const hoje = new Date().toISOString().slice(0, 10);
+              for (const a of alvos) {
+                if (feito(campos.status_id) && !feito(a.status_id)) campos = { ...campos, concluida_em: hoje };
+                else if (!feito(campos.status_id) && feito(a.status_id)) campos = { ...campos, concluida_em: null };
+              }
+            } else if (tabela === "pm_tasks" && "concluida_em" in campos) {
+              const { concluida_em, ...resto } = campos;   // fixa: não se reescreve à mão
+              campos = resto;
+            }
             estado[tabela] = estado[tabela].map((r) =>
               filtros.every(([c, v]) => r[c] === v)
                 ? { ...r, ...campos, ...(campos.custo_previsto != null ? { tem_custo: true } : {}) }
@@ -226,6 +238,36 @@ export const supabase = {
       definirJustificacao(razao);
       registarCampos(tarefa, depois);
       definirJustificacao(null);
+      avisar();
+      return Promise.resolve({ error: null });
+    }
+    if (nome === "pm_apagar_tarefa") {
+      const { p_task, p_justificacao } = args || {};
+      if (!podeEscrever()) {
+        return Promise.resolve({ error: { message: "O teu acesso não permite apagar tarefas." } });
+      }
+      if (!String(p_justificacao || "").trim()) {
+        return Promise.resolve({ error: { message: "A justificação é obrigatória." } });
+      }
+      const tf = estado.pm_tasks.find((t) => t.id === p_task);
+      if (!tf) return Promise.resolve({ error: { message: "A tarefa não existe." } });
+      estado.pm_tasks = estado.pm_tasks.map((t) => t.id === p_task
+        ? { ...t, apagada_em: new Date().toISOString(), apagada_por: "u1",
+            apagada_porque: String(p_justificacao).trim() }
+        : t);
+      registar({ task_id: p_task, tipo: "tarefa", campo: "apagada",
+                 para: tf.titulo, texto: String(p_justificacao).trim() });
+      avisar();
+      return Promise.resolve({ error: null });
+    }
+    if (nome === "pm_repor_tarefa") {
+      const { p_task } = args || {};
+      if (!podeEscrever()) {
+        return Promise.resolve({ error: { message: "O teu acesso não permite repor tarefas." } });
+      }
+      estado.pm_tasks = estado.pm_tasks.map((t) => t.id === p_task
+        ? { ...t, apagada_em: null, apagada_por: null, apagada_porque: null } : t);
+      registar({ task_id: p_task, tipo: "tarefa", campo: "reposta", texto: "Tarefa reposta" });
       avisar();
       return Promise.resolve({ error: null });
     }

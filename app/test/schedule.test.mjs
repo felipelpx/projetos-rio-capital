@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   earliestStart, violations, cascade, resolveViolations,
   slipDays, lateDays, lateStartDays, wouldCycle, depViolated
-} from "../src/lib/schedule.js";
+, fimEfetivo } from "../src/lib/schedule.js";
 import { parseD } from "../src/lib/dates.js";
 
 const dep = (id, lag = 0) => ({ depende_de: id, dias_espera: lag });
@@ -208,4 +208,44 @@ test("ao acertar violações antigas, a antecessora apontada é a que manda", ()
   const c = mexidas.find((m) => m.id === "c");
   assert.equal(c.empurradaPor, "b", "b acaba mais tarde, é b quem obriga c a andar");
   assert.equal(c.inicio, "2026-03-21");
+});
+
+test("uma tarefa concluída acaba no dia em que fechou, não na data que tinha marcada", () => {
+  const t = {
+    id: "x", inicio: "2026-09-14", fim: "2026-10-08",
+    fim_previsto: "2026-09-22", concluida_em: "2026-09-28", deps: []
+  };
+  assert.equal(fimEfetivo(t), "2026-09-28", "a barra acaba na conclusão");
+  assert.equal(slipDays(t), 6, "o desvio conta até ao dia em que fechou, não até 8 de outubro");
+
+  const aberta = { ...t, concluida_em: null };
+  assert.equal(fimEfetivo(aberta), "2026-10-08", "por concluir, vale o fim marcado");
+  assert.equal(slipDays(aberta), 16);
+});
+
+test("concluída antes do previsto dá desvio negativo", () => {
+  const t = { fim: "2026-10-08", fim_previsto: "2026-10-08", concluida_em: "2026-10-01", deps: [] };
+  assert.equal(slipDays(t), -7);
+});
+
+test("uma antecessora concluída liberta a seguinte no dia em que fechou", () => {
+  const byId = [
+    { id: "a", titulo: "Betonagem", fim: "2026-10-20", concluida_em: "2026-10-05" },
+    { id: "b", titulo: "Cofragem", fim: "2026-10-10" }
+  ];
+  assert.equal(
+    earliestStart({ deps: [{ depende_de: "a", dias_espera: 0 }] }, byId),
+    "2026-10-06",
+    "fechou a 5, a seguinte arranca a 6 — não depois de 20"
+  );
+  assert.equal(
+    earliestStart({ deps: [{ depende_de: "a", dias_espera: 3 }] }, byId),
+    "2026-10-09",
+    "com 3 dias de espera"
+  );
+  assert.equal(
+    earliestStart({ deps: [{ depende_de: "b", dias_espera: 0 }] }, byId),
+    "2026-10-11",
+    "por concluir, vale o fim marcado"
+  );
 });

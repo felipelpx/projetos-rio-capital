@@ -42,7 +42,7 @@ Está todo em `01_schema.sql`, com as políticas. Em resumo:
 | `pm_empresas` | empresa; `nome` (único, sem distinguir maiúsculas), `arquivada`. Não se apaga |
 | `pm_projects` | projeto; `foto` (caminho no balde `pm-anexos`), `empresa_id` → `pm_empresas` (→ por decidir: ligar `pm_empresas` às sociedades do ERP), `empresa` (espelho do nome), `arquivado`, `owner_id` |
 | `pm_statuses` | as colunas do quadro, configuráveis pelo utilizador |
-| `pm_tasks` | tarefa; `fim` (real) e `fim_previsto` (linha de base imutável); `tem_custo` e `custo_previsto` (orçamento, euros); `setor` (`comercial`/`operacional`, ou vazio) |
+| `pm_tasks` | tarefa; `fim` (real) e `fim_previsto` (linha de base imutável); `tem_custo` e `custo_previsto` (orçamento, euros); `setor`; `concluida_em` (posta pelo gatilho ao mudar de estado, não editável); `apagada_em`/`apagada_por`/`apagada_porque` (reciclagem) |
 | `pm_task_assignees` | responsáveis → utilizadores |
 | `pm_task_deps` | dependências fim-a-início, com `dias_espera` (espera entre o fim da antecessora e o arranque) |
 | `pm_comments` | só conversa |
@@ -50,7 +50,7 @@ Está todo em `01_schema.sql`, com as políticas. Em resumo:
 | `pm_attachments` | ficheiros (Storage) e links |
 | `pm_subscriptions` | quem quer o resumo diário e com que âmbito |
 
-Oito invariantes que não se devem perder:
+Dez invariantes que não se devem perder:
 
 1. **`fim_previsto` grava-se uma vez e nunca mais muda.** Há um trigger a garantir.
    Só a função `pm_repor_fim_previsto(task, justificacao)` a altera, e essa exige
@@ -91,7 +91,18 @@ Oito invariantes que não se devem perder:
    justificação viaja na definição de sessão `pm.justificacao`, posta pelas
    funções da secção 5. A tabela não tem políticas de insert, update nem
    delete: é só de leitura, para todos, incluindo o super admin.
-8. **`pm_projects.empresa` é um espelho, não um campo.** Quem manda é o
+8. **Uma tarefa nunca é destruída.** `pm_tasks` não tem política de *delete*.
+   Apagar é `pm_apagar_tarefa(task, justificacao)`, que marca `apagada_em`,
+   `apagada_por` e `apagada_porque` e regista no histórico;
+   `pm_repor_tarefa(task)` desfaz. A aplicação filtra `apagada_em is null` em
+   tudo o que desenha, e lista as apagadas à parte.
+9. **`concluida_em` é do servidor e fica fixa.** O gatilho
+   `pm_marcar_conclusao` põe-na ao entrar num estado com `conta_concluido`,
+   limpa-a ao sair, e em qualquer outra alteração repõe o valor antigo — não há
+   como a reescrever. `fimEfetivo(t)` (no cliente) devolve-a em vez do `fim`,
+   e é ela que fecha a barra do Gantt, mede o desvio e liberta as tarefas
+   dependentes — `earliestStart` usa-a em vez do `fim` quando existe.
+10. **`pm_projects.empresa` é um espelho, não um campo.** Quem manda é o
    `empresa_id`; o texto é mantido por dois gatilhos (`pm_projects_empresa`
    ao escrever o projeto, `pm_empresas_renomear` ao renomear a empresa). Existe
    para que tudo o que já lia `.empresa` continue a ler, e para que renomear uma

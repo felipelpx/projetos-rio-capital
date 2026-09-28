@@ -279,6 +279,10 @@ create table if not exists public.pm_tasks (
   posicao       numeric not null default 1000,   -- ordem manual dentro da coluna
   owner_id      uuid references public.profiles(id) on delete cascade, -- tarefa particular
   setor         text check (setor in ('comercial','operacional')),
+  concluida_em  date,                            -- quando passou a um estado de concluído
+  apagada_em    timestamptz,                     -- preenchido = na reciclagem
+  apagada_por   uuid references public.profiles(id) on delete set null,
+  apagada_porque text,
   tem_custo     boolean not null default false,   -- "esta tarefa vai custar dinheiro"
   custo_previsto numeric(12,2),                   -- orçamento, em euros; ver secção 5b
   criado_em     timestamptz not null default now()
@@ -287,6 +291,15 @@ create table if not exists public.pm_tasks (
 -- O setor fica por preencher nas tarefas antigas, de propósito: pô-las todas
 -- num setor à força era inventar informação que ninguém deu.
 alter table public.pm_tasks add column if not exists setor text;
+-- Apagar uma tarefa não a destrói: marca-a. A linha fica, e o histórico dela
+-- com ela. Ver a secção 5d.
+-- Quando a tarefa foi dada por concluída. Não é o mesmo que o fim planeado:
+-- uma tarefa pode fechar antes ou depois da data que tinha marcada, e é este
+-- o dia em que o trabalho acabou de verdade.
+alter table public.pm_tasks add column if not exists concluida_em date;
+alter table public.pm_tasks add column if not exists apagada_em timestamptz;
+alter table public.pm_tasks add column if not exists apagada_por uuid references public.profiles(id) on delete set null;
+alter table public.pm_tasks add column if not exists apagada_porque text;
 do $$ begin
   alter table public.pm_tasks add constraint pm_tasks_setor_check
     check (setor is null or setor in ('comercial','operacional'));
@@ -413,6 +426,39 @@ begin
   return new;
 end;
 $$;
+-- Passar a um estado que conta como concluído marca o dia; voltar atrás
+-- desmarca. Fica no servidor e não no ecrã para valer venha a mudança de onde
+-- vier — incluindo de arrastar o cartão para outra coluna.
+create or replace function public.pm_marcar_conclusao()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare v_agora boolean; v_antes boolean;
+begin
+  select coalesce(conta_concluido, false) into v_agora
+    from public.pm_statuses where id = new.status_id;
+  if tg_op = 'UPDATE' then
+    select coalesce(conta_concluido, false) into v_antes
+      from public.pm_statuses where id = old.status_id;
+  else
+    v_antes := false;
+  end if;
+
+  if v_agora and not v_antes then
+    new.concluida_em := current_date;          -- fecha hoje
+  elsif v_antes and not v_agora then
+    new.concluida_em := null;                  -- reabriu
+  elsif tg_op = 'UPDATE' then
+    /* Fica fixa. Mudar o fim planeado de uma tarefa já fechada não muda o dia
+       em que o trabalho acabou, e ninguém a reescreve à mão. */
+    new.concluida_em := old.concluida_em;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists pm_tasks_conclusao on public.pm_tasks;
+create trigger pm_tasks_conclusao
+  before insert or update on public.pm_tasks
+  for each row execute function public.pm_marcar_conclusao();
+
 drop trigger if exists pm_tasks_custo on public.pm_tasks;
 create trigger pm_tasks_custo
   before insert or update on public.pm_tasks
@@ -663,6 +709,23 @@ select c.task_id, c.autor_id,
 
 delete from public.pm_comments where tipo <> 'comentario';
 
+-- As tarefas que já estavam concluídas não têm data de conclusão. Onde o
+-- histórico souber dizer quando é que passaram a concluídas, usa-se isso; onde
+-- não souber, fica por preencher e a aplicação cai no fim planeado.
+update public.pm_tasks t
+   set concluida_em = f.quando
+  from (
+    select l.task_id, max(l.criado_em)::date as quando
+      from public.pm_task_log l
+      join public.pm_statuses s on s.id = l.para
+     where l.tipo = 'campo' and l.campo = 'status_id' and s.conta_concluido
+     group by l.task_id
+  ) f
+ where t.id = f.task_id
+   and t.concluida_em is null
+   and exists (select 1 from public.pm_statuses s2
+                where s2.id = t.status_id and s2.conta_concluido);
+
 -- Agora que já não sobra nenhum registo aqui, os comentários voltam a ser só
 -- conversa. `create table if not exists` não mexe numa tabela que já lá está,
 -- por isso a restrição troca-se à mão.
@@ -742,6 +805,13 @@ begin
     insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto)
     values (new.id, v_quem, 'campo', 'custo_previsto', old.custo_previsto::text, new.custo_previsto::text, v_just);
   end if;
+  /* O apagar e o repor têm registo próprio, escrito pelas funções da secção
+     5d: sem isto apareciam duas linhas para a mesma coisa. */
+  if new.apagada_em is distinct from old.apagada_em then
+    return null;
+  end if;
+  /* A data de conclusão anda atrás do estado, que já fica registado: uma linha
+     a dizer o mesmo duas vezes só enche o histórico. */
   if new.owner_id is distinct from old.owner_id then
     insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto)
     values (new.id, v_quem, 'campo', 'owner_id', old.owner_id::text, new.owner_id::text, v_just);
@@ -864,6 +934,55 @@ create trigger pm_comments_log
   for each row execute function public.pm_registar_comentario();
 
 -- ----------------------------------------------------------------------------
+-- 5d. Apagar e repor tarefas
+-- ----------------------------------------------------------------------------
+-- Apagar marca a tarefa e guarda a razão; a linha e o histórico ficam. Qualquer
+-- pessoa com escrita completa pode repor o que foi apagado.
+create or replace function public.pm_apagar_tarefa(
+  p_task uuid, p_justificacao text
+) returns void language plpgsql security definer set search_path = public as $$
+declare v_titulo text; v_ja timestamptz;
+begin
+  if not public.pode_escrever('projetos') then
+    raise exception 'O teu acesso não permite apagar tarefas.';
+  end if;
+  if coalesce(trim(p_justificacao),'') = '' then
+    raise exception 'A justificação é obrigatória.';
+  end if;
+  select titulo, apagada_em into v_titulo, v_ja from public.pm_tasks where id = p_task;
+  if not found then raise exception 'A tarefa não existe.'; end if;
+  if v_ja is not null then raise exception 'Essa tarefa já estava apagada.'; end if;
+
+  update public.pm_tasks
+     set apagada_em = now(), apagada_por = auth.uid(), apagada_porque = trim(p_justificacao)
+   where id = p_task;
+
+  insert into public.pm_task_log (task_id, autor_id, tipo, campo, de, para, texto)
+  values (p_task, auth.uid(), 'tarefa', 'apagada', null, v_titulo, trim(p_justificacao));
+end;
+$$;
+
+create or replace function public.pm_repor_tarefa(p_task uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.pode_escrever('projetos') then
+    raise exception 'O teu acesso não permite repor tarefas.';
+  end if;
+  if not exists (select 1 from public.pm_tasks where id = p_task and apagada_em is not null) then
+    raise exception 'Essa tarefa não está apagada.';
+  end if;
+
+  update public.pm_tasks
+     set apagada_em = null, apagada_por = null, apagada_porque = null
+   where id = p_task;
+
+  insert into public.pm_task_log (task_id, autor_id, tipo, campo, texto)
+  values (p_task, auth.uid(), 'tarefa', 'reposta', 'Tarefa reposta');
+end;
+$$;
+
+
+-- ----------------------------------------------------------------------------
 -- 6. Subscrições do resumo diário
 -- ----------------------------------------------------------------------------
 create table if not exists public.pm_subscriptions (
@@ -980,9 +1099,11 @@ create policy tar_alterar on public.pm_tasks for update
   using (pode_criar('projetos') and pm_projeto_visivel(project_id, owner_id))
   with check (pode_criar('projetos') and pm_projeto_visivel(project_id, owner_id));
 -- Apagar: só escrita completa.
+-- Não há política de apagar, de propósito: uma tarefa nunca é destruída, vai
+-- para a reciclagem pela função pm_apagar_tarefa (secção 5d). Destruí-la
+-- levava o histórico dela atrás, e é o histórico que responde às perguntas
+-- que aparecem seis meses depois.
 drop policy if exists tar_apagar on public.pm_tasks;
-create policy tar_apagar on public.pm_tasks for delete
-  using (pode_escrever('projetos') and pm_projeto_visivel(project_id, owner_id));
 
 -- Tabelas dependentes: seguem a visibilidade da tarefa.
 drop policy if exists atr_ler on public.pm_task_assignees;

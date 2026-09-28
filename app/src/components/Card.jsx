@@ -1,7 +1,7 @@
 import { Avatares } from "./Bits.jsx";
 import { PRIORIDADES, eurCurto } from "../lib/format.js";
 import { fmtShort } from "../lib/dates.js";
-import { lateDays, lateStartDays } from "../lib/schedule.js";
+import { lateDays, lateStartDays, fimEfetivo } from "../lib/schedule.js";
 
 export default function Card({ t, projeto, estado, pessoas, porProjeto, hoje, nComentarios, nAnexos, onAbrir, bloqueada }) {
   const concluida = !!estado?.conta_concluido;
@@ -33,9 +33,10 @@ export default function Card({ t, projeto, estado, pessoas, porProjeto, hoje, nC
 
         <div className="card-meta">
           {prio !== "media" && <span className={"pill p-" + prio}>{rotuloPrio}</span>}
-          {t.fim && (
-            <span className={"datechip" + (atraso ? " late" : "")}>
-              {fmtShort(t.fim)}{atraso ? ` +${atraso}d` : ""}
+          {fimEfetivo(t) && (
+            <span className={"datechip" + (atraso ? " late" : "")}
+              title={t.concluida_em ? "Concluída nesta data" : "Fim previsto"}>
+              {fmtShort(fimEfetivo(t))}{atraso ? ` +${atraso}d` : ""}
             </span>
           )}
           {t.custo_previsto != null ? (

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { parseD, toISO, addDays, dayDelta, fmtShort, MESES_LONG, dias } from "../lib/dates.js";
-import { slipDays, lateDays, lateStartDays, depViolated, violations } from "../lib/schedule.js";
+import { slipDays, lateDays, lateStartDays, depViolated, violations, fimEfetivo } from "../lib/schedule.js";
 import { Vazio } from "./Bits.jsx";
 
 const ESCALAS = { dia: 30, semana: 11, mes: 3.6 };
@@ -10,7 +10,7 @@ const ALTURA_PROJETO = 30;
 function intervalo(lista, hoje) {
   let min = null, max = null;
   for (const t of lista) {
-    const a = parseD(t.inicio), b = parseD(t.fim);
+    const a = parseD(t.inicio), b = parseD(fimEfetivo(t));
     if (a && (!min || a < min)) min = a;
     if (b && (!max || b > max)) max = b;
     if (a && (!max || a > max)) max = a;
@@ -68,7 +68,7 @@ export default function Gantt({ ctx, onAjustar }) {
       const cor = p?.color || "#7C8B99";
       let gs = null, ge = null;
       for (const t of tarefas) {
-        const a = parseD(t.inicio), b = parseD(t.fim);
+        const a = parseD(t.inicio), b = parseD(fimEfetivo(t));
         if (a && (!gs || a < gs)) gs = a;
         if (b) {
           const ld = lateDays(t, concluida(t), hoje);
@@ -88,7 +88,8 @@ export default function Gantt({ ctx, onAjustar }) {
         (a.posicao || 0) - (b.posicao || 0)
       )) {
         const a = parseD(t.inicio);
-        let b = parseD(t.fim);
+        /* A barra acaba onde o trabalho acabou, não onde estava marcado. */
+        let b = parseD(fimEfetivo(t));
         const linha = { tipo: "tarefa", t, cor, estado: estadoDe(t.status_id) };
         if (a && b) {
           if (b < a) b = a;

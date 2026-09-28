@@ -21,7 +21,7 @@ const TABELAS = [
 export function useBoard(session) {
   const [estado, setEstado] = useState({
     carregado: false,
-    projects: [], empresas: [], statuses: [], tasks: [], comments: [], historico: [],
+    projects: [], empresas: [], statuses: [], tasks: [], apagadas: [], comments: [], historico: [],
     attachments: [], subscriptions: [], pessoas: [], acesso: null
   });
   const [erro, setErro] = useState("");
@@ -69,7 +69,12 @@ export function useBoard(session) {
         projects: proj.data || [],
         empresas: emp.data || [],
         statuses: st.data || [],
-        tasks: montarTarefas(tk.data || [], asg.data || [], dps.data || []),
+        /* As apagadas ficam de fora de tudo — quadro, Gantt, totais, alertas —
+           mas continuam a existir, com o histórico delas. Vão para uma lista
+           à parte, de onde se podem repor. */
+        tasks: montarTarefas((tk.data || []).filter((t) => !t.apagada_em), asg.data || [], dps.data || []),
+        apagadas: montarTarefas((tk.data || []).filter((t) => t.apagada_em), asg.data || [], dps.data || [])
+          .sort((a, b) => String(b.apagada_em).localeCompare(String(a.apagada_em))),
         comments: cm.data || [],
         historico: hist.data || [],
         attachments: at.data || [],
@@ -147,6 +152,13 @@ export function useBoard(session) {
   }, []);
 
   /** Tudo o que não sejam datas nem euros: título, estado, notas, setor… */
+  const apagarTarefa = useCallback((id, justificacao) =>
+    guardar(() => supabase.rpc("pm_apagar_tarefa", { p_task: id, p_justificacao: justificacao })),
+    [guardar]);
+
+  const reporTarefa = useCallback((id) =>
+    guardar(() => supabase.rpc("pm_repor_tarefa", { p_task: id })), [guardar]);
+
   const patchTarefa = useCallback(async (id, patch) => {
     const antes = tarefasRef.current.find((t) => t.id === id);
     if (!antes) return { ok: false };
@@ -201,7 +213,7 @@ export function useBoard(session) {
   return {
     ...estado, erro, aviso, setAviso, setErro,
     papel, podeEscrever, podeCriar, podeComentar, souAdmin, recarregar: carregar,
-    guardar, patchTarefa, alterarDatas, ajustarDependencias
+    guardar, patchTarefa, alterarDatas, apagarTarefa, reporTarefa, ajustarDependencias
   };
 }
 

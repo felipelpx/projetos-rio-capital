@@ -6,7 +6,7 @@
 -- consegue fazer, e apaga-se a si próprio no fim.
 --
 -- Cada bloco imprime "OK" ou "FALHA". Se aparecer uma FALHA, não avançar.
--- São 36 verificações, sobre os quatro papéis.
+-- São 44 verificações, sobre os quatro papéis.
 --
 -- Em Supabase corre-se tudo de uma vez (Run). O `set request.jwt.claim.sub`
 -- finge que somos cada um dos utilizadores.
@@ -174,14 +174,10 @@ begin
   end;
 
   begin
-    delete from public.pm_tasks where titulo = '__parcial__';
-    if found then
-      n := n + 1; insert into _res (ordem, o_que, resultado)
-      values (n, 'Editor parcial NÃO apaga', 'FALHA — apagou');
-    else
-      n := n + 1; insert into _res (ordem, o_que, resultado)
-      values (n, 'Editor parcial NÃO apaga', 'OK');
-    end if;
+    perform public.pm_apagar_tarefa(
+      (select id from public.pm_tasks where titulo = '__parcial__'), 'já não é preciso');
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor parcial NÃO apaga', 'FALHA — apagou');
   exception when others then
     n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Editor parcial NÃO apaga', 'OK');
   end;
@@ -322,6 +318,94 @@ begin
     get stacked diagnostics v_erro = message_text;
     n := n + 1; insert into _res (ordem, o_que, resultado)
     values (n, 'Editor altera o orçamento, com justificação', 'FALHA — ' || left(v_erro, 40));
+  end;
+
+  begin
+    delete from public.pm_tasks where titulo = '__parcial__';
+    if found then
+      n := n + 1; insert into _res (ordem, o_que, resultado)
+      values (n, 'Ninguém destrói tarefas', 'FALHA — destruiu');
+    else
+      n := n + 1; insert into _res (ordem, o_que, resultado)
+      values (n, 'Ninguém destrói tarefas', 'OK');
+    end if;
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado) values (n, 'Ninguém destrói tarefas', 'OK');
+  end;
+
+  begin
+    perform public.pm_apagar_tarefa((select id from public.pm_tasks where titulo = '__parcial__'), '  ');
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Apagar SEM justificação é recusado', 'FALHA — passou');
+  exception when others then
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Apagar SEM justificação é recusado', 'OK');
+  end;
+
+  begin
+    perform public.pm_apagar_tarefa(
+      (select id from public.pm_tasks where titulo = '__parcial__'), 'duplicada da anterior');
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor apaga, com justificação',
+            case when (select apagada_em from public.pm_tasks where titulo = '__parcial__') is not null
+                 then 'OK' else 'FALHA — não marcou' end);
+  exception when others then
+    get stacked diagnostics v_erro = message_text;
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor apaga, com justificação', 'FALHA — ' || left(v_erro, 40));
+  end;
+
+  begin
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'A tarefa apagada e o histórico dela ficam',
+            case when exists (select 1 from public.pm_task_log
+                               where task_id = (select id from public.pm_tasks where titulo = '__parcial__')
+                                 and campo = 'apagada' and texto = 'duplicada da anterior')
+                 then 'OK' else 'FALHA — sem registo' end);
+  end;
+
+  begin
+    perform public.pm_repor_tarefa((select id from public.pm_tasks where titulo = '__parcial__'));
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor repõe o que foi apagado',
+            case when (select apagada_em from public.pm_tasks where titulo = '__parcial__') is null
+                 then 'OK' else 'FALHA — continua apagada' end);
+  exception when others then
+    get stacked diagnostics v_erro = message_text;
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor repõe o que foi apagado', 'FALHA — ' || left(v_erro, 40));
+  end;
+
+  begin
+    update public.pm_tasks
+       set status_id = (select id from public.pm_statuses where conta_concluido order by posicao limit 1)
+     where id = v_task;
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Concluir marca o dia da conclusão',
+            case when (select concluida_em from public.pm_tasks where id = v_task) = current_date
+                 then 'OK' else 'FALHA — não marcou' end);
+  exception when others then
+    get stacked diagnostics v_erro = message_text;
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Concluir marca o dia da conclusão', 'FALHA — ' || left(v_erro, 40));
+  end;
+
+  begin
+    update public.pm_tasks set concluida_em = date '2020-01-01' where id = v_task;
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'A data de conclusão não se reescreve à mão',
+            case when (select concluida_em from public.pm_tasks where id = v_task) = current_date
+                 then 'OK' else 'FALHA — mudou' end);
+  end;
+
+  begin
+    update public.pm_tasks
+       set status_id = (select id from public.pm_statuses where not conta_concluido order by posicao limit 1)
+     where id = v_task;
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Reabrir limpa a data de conclusão',
+            case when (select concluida_em from public.pm_tasks where id = v_task) is null
+                 then 'OK' else 'FALHA — ficou lá' end);
   end;
 
   ---------------------------------------------------------------- super admin

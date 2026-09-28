@@ -59,6 +59,8 @@ const qualTarefa = (id, ctx) => ctx.tasks.find((t) => t.id === id)?.titulo || "o
 export function descrever(l, ctx) {
   switch (l.tipo) {
     case "tarefa":
+      if (l.campo === "apagada") return { titulo: "Apagou a tarefa" };
+      if (l.campo === "reposta") return { titulo: "Repôs a tarefa" };
       return { titulo: "Tarefa criada" };
 
     case "campo": {

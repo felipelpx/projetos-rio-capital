@@ -46,14 +46,17 @@ const t = (o) => ({ progresso: 0, notas: "", assignees: [], deps: [], prioridade
 export const tasks = [
   t({ id: "t1", project_id: "p1", titulo: "Orçamento, ajuste de lojas", status_id: "done",
       inicio: "2026-09-14", fim: "2026-09-17", fim_previsto: "2026-09-17", progresso: 100, assignees: ["u1"],
-      tem_custo: true, custo_previsto: 3200, setor: "comercial" }),
+      tem_custo: true, custo_previsto: 3200, setor: "comercial", concluida_em: "2026-09-17" }),
   t({ id: "t2", project_id: "p1", titulo: "Obras de ajuste da loja", status_id: "doing", prioridade: "alta",
       inicio: "2026-09-18", fim: "2026-09-23", fim_previsto: "2026-09-23", progresso: 40,
       deps: [{ depende_de: "t1", dias_espera: 0 }], assignees: ["u1", "u2"],
       notas: "A obra arranca assim que o orçamento fechar.",
       tem_custo: true, custo_previsto: 41500, setor: "operacional" }),
-  t({ id: "t3", project_id: "p1", titulo: "Orçamento, limpeza", status_id: "waiting",
-      inicio: "2026-09-14", fim: "2026-09-30", fim_previsto: "2026-09-22",
+  /* O caso que a Juliana apanhou: concluída a 28 set mas com o fim marcado
+     para 8 out — a barra tem de acabar na conclusão, não na data marcada. */
+  t({ id: "t3", project_id: "p1", titulo: "Orçamento, limpeza", status_id: "done",
+      inicio: "2026-09-14", fim: "2026-10-08", fim_previsto: "2026-09-22",
+      concluida_em: "2026-09-28", progresso: 100,
       notas: "Derrapou oito dias face ao previsto.",
       tem_custo: true, setor: "operacional" }),   // tem custo, ainda por orçamentar
   t({ id: "t4", project_id: "p1", titulo: "Limpeza pós-obra", status_id: "todo",

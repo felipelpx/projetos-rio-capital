@@ -30,8 +30,11 @@ export function earliestStart(task, tasks) {
   let best = null;
   for (const d of depsOf(task)) {
     const p = byId.get(d.depende_de);
-    if (!p || !p.fim) continue;
-    const pe = parseD(p.fim);
+    /* Se a antecessora já fechou, o que liberta esta é o dia em que fechou —
+       não a data que tinha marcada. Acabar cedo deixa a seguinte arrancar cedo. */
+    const fimP = p && (p.concluida_em || p.fim);
+    if (!fimP) continue;
+    const pe = parseD(fimP);
     if (!pe) continue;
     const lag = Math.max(0, Number(d.dias_espera) || 0);
     const cand = addDays(pe, 1 + lag);
@@ -200,10 +203,24 @@ export function resolveViolations(tasks, onlyId = null) {
 /* ---- estado das tarefas face ao calendário ---- */
 
 /** Dias entre a linha de base e o fim real. >0 derrapou, <0 adiantou. */
+/**
+ * O dia em que a tarefa acabou de facto.
+ *
+ * Enquanto está aberta é o fim planeado. Depois de concluída é o dia em que
+ * passou a concluída, que é o que interessa: uma tarefa fechada a 28 de
+ * setembro não continua a correr até 8 de outubro só porque era essa a data
+ * que tinha marcada.
+ */
+export function fimEfetivo(t) {
+  return t?.concluida_em || t?.fim || null;
+}
+
+/** Desvio face ao plano, medido no dia em que a tarefa acabou mesmo. */
 export function slipDays(t) {
-  if (!t?.fim || !t?.fim_previsto || t.fim === t.fim_previsto) return 0;
+  const real = fimEfetivo(t);
+  if (!real || !t?.fim_previsto || real === t.fim_previsto) return 0;
   const be = parseD(t.fim_previsto);
-  const e = parseD(t.fim);
+  const e = parseD(real);
   return be && e ? dayDelta(be, e) : 0;
 }
 
