@@ -150,8 +150,11 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
      seis meses. Quem edita são os dois editores. */
   const podeMexerNaData = () => podeCriar;
 
+  /* Parte do que já estiver por confirmar, não do que está gravado: mexer numa
+     data não pode deitar fora a mudança que a pessoa já fez na outra. */
   function novasDatas(campo, valor) {
-    const d = { inicio: t.inicio, fim: t.fim, [campo]: valor || null };
+    const base = mudarData || { inicio: t.inicio, fim: t.fim };
+    const d = { inicio: base.inicio, fim: base.fim, [campo]: valor || null };
     if (campo === "inicio" && valor && d.fim && d.fim < valor) d.fim = valor;
     if (campo === "fim" && valor && d.inicio && d.inicio > valor) d.inicio = valor;
     return d;
@@ -166,21 +169,33 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
 
   async function pedirData(campo, valor) {
     const d = novasDatas(campo, valor);
-    if (d.inicio === t.inicio && d.fim === t.fim) return;
+    setErroData("");
+    /* Voltou ao que estava: já não há nada a justificar. */
+    if (d.inicio === t.inicio && d.fim === t.fim) { setMudarData(null); return; }
     if (soPreenche(d)) {
-      setErroData("");
+      setMudarData(null);
       await alterarDatas(t.id, d, null);
       return;
     }
-    setMudarData({ campo, valor, arrastou: d[campo === "inicio" ? "fim" : "inicio"] });
+    setMudarData(d);
     setDataPorque("");
-    setErroData("");
   }
+
+  /* As duas datas vão juntas, com uma justificação só: mudar o fim de uma obra
+     costuma mudar-lhe o início, e pedir a razão duas vezes para a mesma
+     decisão é ruído. O histórico fica com uma linha por data. */
+  const mudancasPendentes = () => {
+    if (!mudarData) return [];
+    const l = [];
+    if (mudarData.inicio !== t.inicio) l.push(["Início", t.inicio, mudarData.inicio]);
+    if (mudarData.fim !== t.fim) l.push(["Fim", t.fim, mudarData.fim]);
+    return l;
+  };
 
   async function confirmarData() {
     const j = dataPorque.trim();
-    if (!j) { setErroData("Escreve a justificação — fica registada nos comentários."); return; }
-    const r = await alterarDatas(t.id, novasDatas(mudarData.campo, mudarData.valor), j);
+    if (!j) { setErroData("Escreve a justificação — fica registada no histórico."); return; }
+    const r = await alterarDatas(t.id, mudarData, j);
     if (r?.ok) { setMudarData(null); setDataPorque(""); setErroData(""); }
   }
 
@@ -367,7 +382,7 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
             <div className="fgroup">
               <label htmlFor="d-inicio">Início</label>
               <CampoData id="d-inicio" rotulo="Início" disabled={!podeMexerNaData()}
-                valor={mudarData?.campo === "inicio" ? mudarData.valor : (t.inicio || "")}
+                valor={(mudarData ? mudarData.inicio : t.inicio) || ""}
                 onGuardar={(v) => pedirData("inicio", v)} />
               {!podeCriar && (
                 <span className="co-note">O teu acesso não permite definir datas.</span>
@@ -376,7 +391,7 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
             <div className="fgroup">
               <label htmlFor="d-fim">Fim (real)</label>
               <CampoData id="d-fim" rotulo="Fim (real)" disabled={!podeMexerNaData()}
-                valor={mudarData?.campo === "fim" ? mudarData.valor : (t.fim || "")}
+                valor={(mudarData ? mudarData.fim : t.fim) || ""}
                 onGuardar={(v) => pedirData("fim", v)} />
 
               <span className={"co-note" + (sd > 0 ? " warnnote" : sd < 0 ? " oknote" : "")}>
@@ -429,19 +444,17 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
 
           {mudarData && (
             <div className="rebaseform">
+              <ul className="mudancas">
+                {mudancasPendentes().map(([rotulo, de, para]) => (
+                  <li key={rotulo}>
+                    <b>{rotulo}:</b> {fmtShort(de) || "sem data"} → {fmtShort(para) || "sem data"}
+                  </li>
+                ))}
+              </ul>
               <p className="hintline">
-                {mudarData.campo === "inicio" ? "Início" : "Fim"}:{" "}
-                {fmtShort(mudarData.campo === "inicio" ? t.inicio : t.fim) || "sem data"} →{" "}
-                {fmtShort(mudarData.valor) || "sem data"}. Fica registado nos comentários, com o
-                teu nome, no histórico da tarefa. As tarefas que dependem desta são
-                empurradas, se for preciso.
+                Fica registado no histórico da tarefa, com o teu nome. As tarefas que dependem
+                desta são empurradas, se for preciso.
               </p>
-              {mudarData.arrastou && (
-                <p className="hintline warnnote">
-                  Isto também mexe {mudarData.campo === "fim" ? "no início" : "no fim"}, que já
-                  estava marcado: passa para {fmtShort(mudarData.arrastou)}.
-                </p>
-              )}
               <textarea className="field" rows="2" value={dataPorque} aria-label="Justificação da data"
                 placeholder="Porque é que a data mudou? (obrigatório)"
                 onChange={(e) => { setDataPorque(e.target.value); setErroData(""); }} />
