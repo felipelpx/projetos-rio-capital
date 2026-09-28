@@ -4,6 +4,7 @@ import { today } from "../src/lib/dates.js";
 import { PRIORIDADES, SETORES } from "../src/lib/format.js";
 import { cascade, resolveViolations } from "../src/lib/schedule.js";
 import Sidebar from "../src/components/Sidebar.jsx";
+import NovaTarefa from "../src/components/NovaTarefa.jsx";
 import Board from "../src/components/Board.jsx";
 import ProjectBoard from "../src/components/ProjectBoard.jsx";
 import Gantt from "../src/components/Gantt.jsx";
@@ -51,6 +52,7 @@ export default function Harness() {
   const [filtros, setFiltros] = useState({ estados: null, prioridades: null, setores: null, pessoas: null });
   const [abertoMulti, setAbertoMulti] = useState(null);
   const [aberta, setAberta] = useState(null);
+  const [aCriar, setACriar] = useState(null);
   const [papel, setPapel] = useState("admin");
   /* O cliente falso precisa de saber o papel para recusar o que a base de dados
      recusaria — o ecrã esconde botões, mas as regras estão por baixo. */
@@ -198,7 +200,9 @@ export default function Harness() {
         <MultiSelect rotuloTudo="Todos os colaboradores" plural="colaboradores" itens={itensPessoa}
           valor={filtros.pessoas} onChange={(v) => setFiltros({ ...filtros, pessoas: v })}
           aberto={abertoMulti === "top"} onAbrir={(a) => setAbertoMulti(a ? "top" : null)} />
-        {podeCriarCom(papel) && <button className="btn btn-primary">Nova tarefa</button>}
+        {podeCriarCom(papel) && (
+          <button className="btn btn-primary" onClick={() => setACriar({ statusId: null, projectId: null })}>Nova tarefa</button>
+        )}
         <Conta email="juliana@riocapital.pt" papel={papel} />
       </header>
       {erro && (
@@ -220,13 +224,17 @@ export default function Harness() {
           podeCriar={podeCriarCom(papel)} podeEscrever={podeEscreverCom(papel)}
           sessaoUserId="u1" recarregar={() => {}} guardar={guardar} />
         <div className="content">
-          {vista === "quadro" && <Board ctx={ctx} criarTarefa={() => {}} />}
-          {vista === "projetos" && <ProjectBoard ctx={ctx} criarTarefa={() => {}} />}
+          {vista === "quadro" && <Board ctx={ctx} criarTarefa={(a, b) => setACriar({ statusId: a ?? null, projectId: b ?? null })} />}
+          {vista === "projetos" && <ProjectBoard ctx={ctx} criarTarefa={(a, b) => setACriar({ statusId: a ?? null, projectId: b ?? null })} />}
           {vista === "gantt" && <Gantt ctx={ctx} onAjustar={ajustar} />}
           {vista === "lista" && <TaskList ctx={ctx} />}
           {vista === "alertas" && <Alerts ctx={ctx} />}
         </div>
       </div>
+      {aCriar && (
+        <NovaTarefa ctx={ctx} statusId={aCriar.statusId} projectId={aCriar.projectId}
+          onFechar={() => setACriar(null)} />
+      )}
       {aberta && <TaskDrawer ctx={ctx} tarefaId={aberta} onFechar={() => setAberta(null)} onAjustar={ajustar} />}
     </div>
   );

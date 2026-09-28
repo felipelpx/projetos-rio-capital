@@ -99,9 +99,9 @@ vez.
 
 | `role` | na aplicação | o que pode |
 |---|---|---|
-| `admin` | **Super admin** | tudo: **é o único que altera datas e orçamentos já gravados**, sempre com justificação, repõe a data prevista, e dá ou retira acesso às pessoas |
-| `interact` | **Editor** | cria tarefas **com datas**, grava orçamentos, cria e altera projetos e empresas, mexe nas dependências, apaga, comenta, anexa. **Não** altera datas nem orçamentos já gravados, não repõe a data prevista nem gere acessos |
-| `contrib` | **Editor parcial** | cria tarefas **com datas**, projetos e empresas, altera tarefas, comenta e anexa. **Não** grava orçamentos nem altera datas já marcadas, **não apaga** nada e **não altera projetos nem empresas** que já existam |
+| `admin` | **Super admin** | tudo, e é **o único que repõe a data prevista** e que dá ou retira acesso às pessoas |
+| `interact` | **Editor** | cria e altera tudo nas tarefas — datas, orçamentos, dependências —, cria e altera projetos e empresas, apaga, comenta, anexa. **Não** repõe a data prevista nem gere acessos |
+| `contrib` | **Editor parcial** | o mesmo nas tarefas, incluindo datas e orçamentos. **Não apaga** nada e **não altera projetos nem empresas** que já existam |
 | `view` | **Visualizador** | vê o quadro e comenta. Não cria nem altera |
 
 Duas fronteiras, ambas de propósito:
@@ -143,17 +143,22 @@ perde: fica no histórico. Os comentários passaram a ser só conversa; os
 registos de alteração, que antes apareciam misturados com eles, mudaram-se para
 o histórico.
 
-**Preencher é de todos; alterar é do super admin.** Uma data por marcar
-preenche-se sem cerimónia — os dois editores marcam o início e o fim das
-tarefas que criam. Um orçamento por gravar é do editor completo, e já pede a
-razão, porque aí o número em si é a informação.
+**Criar uma tarefa.** O botão **Nova tarefa** (ou o *+ Adicionar tarefa* no fundo
+de cada coluna) abre um formulário: título, projeto, estado, prioridade, setor,
+datas, custo, responsáveis e notas. **Nada é gravado enquanto não carregares em
+Adicionar tarefa** — podes escolher uma data, mudar de ideias e escolher outra,
+que para a base de dados é tudo o primeiro preenchimento. Se desistires a meio,
+não fica nenhuma tarefa vazia para trás.
 
-A partir daí fecha. Mexer numa data ou num valor que já lá estava é **só do
-super admin**, e abre um campo a perguntar porquê; a resposta fica nos
-comentários da tarefa, com o nome de quem mexeu e o valor antigo. Não é só o
-ecrã a pedir: a base de dados recusa, venha o pedido de onde vier. Para os
-outros, o campo fica bloqueado com a nota *"Marcada. Só um super admin a pode
-alterar."*
+**Editar é dos dois editores; o que fica é o rasto.** Uma data por marcar
+preenche-se sem cerimónia. Mexer numa data ou num orçamento que já lá estava
+abre um campo a perguntar porquê, e a resposta fica no histórico da tarefa com
+o nome de quem mexeu e o valor antigo. Gravar o primeiro orçamento também pede
+a razão, porque aí o número em si é a informação.
+
+Não é só o ecrã a pedir: a base de dados recusa qualquer escrita nessas colunas
+sem passar pela função que exige a justificação, venha o pedido de onde vier. O
+visualizador não mexe em nada.
 
 Quando uma tarefa é empurrada por outra de que depende, a justificação
 escreve-se sozinha ("Empurrada automaticamente por: …") em vez de interromper —

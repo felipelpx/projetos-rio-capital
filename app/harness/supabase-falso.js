@@ -138,14 +138,14 @@ export const supabase = {
                 (r.inicio != null && "inicio" in campos && campos.inicio !== r.inicio) ||
                 (r.fim != null && "fim" in campos && campos.fim !== r.fim));
               if (marcada) {
-                return Promise.resolve({ error: { message: "Alterar uma data já marcada é de super admin, e exige justificação." } }).then(res);
+                return Promise.resolve({ error: { message: "Alterar uma data já marcada exige uma justificação." } }).then(res);
               }
             }
             if (tabela === "pm_tasks" && "custo_previsto" in campos) {
               return Promise.resolve({ error: { message: "Gravar um orçamento exige uma justificação." } }).then(res);
             }
             if (tabela === "pm_tasks" && "tem_custo" in campos) {
-              if (!podeEscrever()) {
+              if (!podeCriar()) {
                 return Promise.resolve({ error: { message: "O teu acesso não permite alterar custos." } }).then(res);
               }
               const preso = alvos.find((r) => r.custo_previsto != null && campos.tem_custo === false);
@@ -203,10 +203,7 @@ export const supabase = {
   rpc(nome, args) {
     if (nome === "pm_alterar_datas") {
       const { p_task, p_inicio, p_fim, p_justificacao, p_empurrada_por } = args || {};
-      if (!p_empurrada_por && papel !== "admin") {
-        return Promise.resolve({ error: { message: "Só um super admin pode alterar uma data já marcada." } });
-      }
-      if (p_empurrada_por && !podeCriar()) {
+      if (!podeCriar()) {
         return Promise.resolve({ error: { message: "O teu acesso não permite alterar datas." } });
       }
       const tarefa = estado.pm_tasks.find((t) => t.id === p_task);
@@ -233,18 +230,9 @@ export const supabase = {
       return Promise.resolve({ error: null });
     }
     if (nome === "pm_definir_orcamento") {
-      if (args && args.p_valor != null) {
-        const t0 = estado.pm_tasks.find((t) => t.id === args.p_task);
-        if (t0 && t0.custo_previsto == null && !podeEscrever()) {
-          return Promise.resolve({ error: { message: "O teu acesso não permite definir custos." } });
-        }
-      }
+
       const { p_task, p_valor, p_justificacao } = args || {};
-      const jaTinha = estado.pm_tasks.find((t) => t.id === p_task)?.custo_previsto != null;
-      if (jaTinha && papel !== "admin") {
-        return Promise.resolve({ error: { message: "Só um super admin pode alterar um orçamento já definido." } });
-      }
-      if (!jaTinha && !podeEscrever()) {
+      if (!podeCriar()) {
         return Promise.resolve({ error: { message: "O teu acesso não permite definir custos." } });
       }
       if (!String(p_justificacao || "").trim()) {

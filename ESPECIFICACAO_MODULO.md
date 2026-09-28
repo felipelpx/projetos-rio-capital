@@ -65,17 +65,17 @@ Oito invariantes que não se devem perder:
    `app_access('projetos')`. Só essas pessoas podem ser responsáveis por tarefas.
    Quatro papéis: **Super admin** (tudo, incluindo repor a data prevista e gerir
    acessos), **Editor** (tudo menos essas duas coisas), **Editor parcial** (cria
-   tarefas com datas e comenta, mas não grava orçamentos nem apaga) e
+   e altera tudo nas tarefas, mas não apaga) e
    **Visualizador** (vê e comenta). As restrições vivem na base de dados:
    `pm_repor_fim_previsto` recusa quem não for super admin, e o gatilho
    `pm_guardar_datas` recusa alterações de datas a quem não tem escrita
    completa. O ecrã limita-se a não mostrar botões que iam falhar.
 4. **Adiar o fim de uma tarefa empurra as dependentes.** Ver a secção 3.6.
-5. **Preencher é de quem cria; alterar é do super admin.** Marcar uma data
-   vazia é de `pode_criar` (os dois editores) e vai direto; gravar o primeiro
-   orçamento é de `pode_escrever` e já leva justificação. Alterar o que já lá
-   está passa por `pm_alterar_datas(task, inicio, fim, justificacao)` ou
-   `pm_definir_orcamento(task, valor, justificacao)`, ambas só de `e_admin`.
+5. **Nenhuma data nem euro muda sem justificação.** Marcar uma data vazia é de
+   `pode_criar` e vai direto. Tudo o resto passa por
+   `pm_alterar_datas(task, inicio, fim, justificacao)` ou
+   `pm_definir_orcamento(task, valor, justificacao)`, ambas de `pode_criar`,
+   ambas com justificação obrigatória e registo em `pm_task_log`.
    Os gatilhos `pm_guardar_datas` e `pm_guardar_custo` recusam qualquer escrita
    directa nessas colunas, por isso não há caminho que salte o registo. A
    cascata usa a mesma função com `p_empurrada_por`, que só é aceite se a

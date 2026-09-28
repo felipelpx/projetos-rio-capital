@@ -353,12 +353,12 @@ begin
   end if;
 
   -- Escrever a primeira data é preencher, não alterar: passa. Mexer numa data
-  -- que já lá estava muda o plano de toda a gente, e isso é de super admin,
-  -- pela função pm_alterar_datas, que obriga a dizer porquê.
+  -- que já lá estava muda o plano de toda a gente, e passa pela função
+  -- pm_alterar_datas, que obriga a dizer porquê e deixa registo.
   if tg_op = 'UPDATE' then
     if (old.inicio is not null and new.inicio is distinct from old.inicio)
     or (old.fim    is not null and new.fim    is distinct from old.fim) then
-      raise exception 'Alterar uma data já marcada é de super admin, e exige justificação.';
+      raise exception 'Alterar uma data já marcada exige uma justificação.';
     end if;
   end if;
   return new;
@@ -369,10 +369,8 @@ create trigger pm_tasks_datas
   before insert or update on public.pm_tasks
   for each row execute function public.pm_guardar_datas();
 
--- O orçamento segue a mesma regra da linha de base: escreve-se uma vez, e
--- mudá-lo depois é um ato deliberado de quem manda. Quem tem escrita completa
--- põe o valor numa tarefa que ainda não o tinha; alterar um valor já lá posto
--- passa pela função da secção 5b, que exige super admin e justificação.
+-- Qualquer euro escrito passa pela função da secção 5b, que exige justificação
+-- e deixa registo. Quem edita são os dois editores; o visualizador não.
 create or replace function public.pm_guardar_custo()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
@@ -381,7 +379,7 @@ begin
     return new;
   end if;
 
-  if not public.pode_escrever('projetos') then
+  if not public.pode_criar('projetos') then
     if tg_op = 'INSERT' then
       if new.tem_custo or new.custo_previsto is not null then
         raise exception 'O teu acesso não permite definir custos.';
@@ -400,7 +398,7 @@ begin
     if old.custo_previsto is null then
       raise exception 'Gravar um orçamento exige uma justificação.';
     else
-      raise exception 'Alterar um orçamento já gravado exige um super admin e uma justificação.';
+      raise exception 'Alterar um orçamento já gravado exige uma justificação.';
     end if;
   end if;
   if tg_op = 'INSERT' and new.custo_previsto is not null then
@@ -408,7 +406,7 @@ begin
   end if;
   -- Desmarcar "tem custo" com orçamento posto equivalia a apagá-lo pela porta das traseiras.
   if tg_op = 'UPDATE' and old.custo_previsto is not null and not new.tem_custo then
-    raise exception 'A tarefa tem orçamento. Para o retirar é preciso um super admin.';
+    raise exception 'A tarefa tem orçamento. Retirá-lo exige uma justificação.';
   end if;
   -- Um valor implica sempre a marca, para os dois não se contradizerem.
   if new.custo_previsto is not null then new.tem_custo := true; end if;
@@ -537,14 +535,7 @@ create or replace function public.pm_alterar_datas(
 declare
   v_ini date; v_fim date; v_prev date; v_just text; v_nova_base date;
 begin
-  /* A cascata é a consequência de uma alteração que já foi autorizada: quem
-     mexeu na tarefa de origem é que tinha de ter direito a isso. Mexer numa
-     data à mão é outra coisa, e é de super admin. */
-  if p_empurrada_por is null then
-    if not public.e_admin('projetos') then
-      raise exception 'Só um super admin pode alterar uma data já marcada.';
-    end if;
-  elsif not public.pode_criar('projetos') then
+  if not public.pode_criar('projetos') then
     raise exception 'O teu acesso não permite alterar datas.';
   end if;
   select inicio, fim, fim_previsto into v_ini, v_fim, v_prev
@@ -597,14 +588,10 @@ begin
   -- SECURITY DEFINER passa por cima do RLS: o papel confere-se aqui dentro.
   select custo_previsto into v_antigo from public.pm_tasks where id = p_task;
   if not found then raise exception 'A tarefa não existe.'; end if;
-  -- Gravar o primeiro orçamento é de quem tem escrita completa; mexer num que
-  -- já lá está é só do super admin. Justificação, em qualquer dos casos.
-  if v_antigo is null then
-    if not public.pode_escrever('projetos') then
-      raise exception 'O teu acesso não permite definir custos.';
-    end if;
-  elsif not public.e_admin('projetos') then
-    raise exception 'Só um super admin pode alterar um orçamento já definido.';
+  -- Gravar e alterar é dos dois editores. Justificação, em qualquer dos casos:
+  -- é ela que dá sentido à linha que fica no histórico.
+  if not public.pode_criar('projetos') then
+    raise exception 'O teu acesso não permite definir custos.';
   end if;
   if coalesce(trim(p_justificacao),'') = '' then
     raise exception 'A justificação é obrigatória.';

@@ -16,10 +16,11 @@
 --
 --   'admin'     Super admin     tudo, incluindo repor a data prevista com
 --                               justificação e dar acesso a pessoas
---   'interact'  Editor          cria e altera tarefas, mexe em datas e
---                               dependências, apaga
---   'contrib'   Editor parcial  cria e altera tarefas e comenta;
---                               NÃO mexe em datas nem apaga nada
+--   'interact'  Editor          cria e altera tudo nas tarefas, incluindo
+--                               datas, orçamentos e dependências, e apaga.
+--                               Toda a alteração fica no histórico
+--   'contrib'   Editor parcial  o mesmo, menos apagar e menos alterar
+--                               projetos e empresas que já existam
 --   'view'      Visualizador    vê o quadro e comenta
 --
 -- ============================================================================
@@ -31,7 +32,7 @@ with equipa (email, nome, papel) as (
     ('juliana@riocapital.pt',       'Juliana Dornelles', 'admin'),
     ('felipe@riocapital.pt',        'Felipe',            'admin'),
     ('info@cmsi.pt',                'Julia',             'interact'),
-    ('davyd.ventura@riocapital.pt', 'Davyd Ventura',     'contrib'),
+    ('davyd.ventura@riocapital.pt', 'Davyd Ventura',     'interact'),
     ('henrique@riocapital.pt',      'Henrique',          'view'),
     ('marcelo@riocapital.pt',       'Marcelo',           'view')
 

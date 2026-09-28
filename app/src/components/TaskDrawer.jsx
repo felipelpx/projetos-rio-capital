@@ -24,6 +24,50 @@ function CampoLento({ valor, onGuardar, textarea, ...props }) {
   return textarea ? <textarea className="field" {...comuns} /> : <input className="field" {...comuns} />;
 }
 
+/**
+ * Campo de data que só entrega o valor quando a pessoa o larga.
+ *
+ * Gravava a cada mexida. Quem escolhia uma data no calendário e logo a seguir a
+ * corrigia — que é o normal — via a correção contar como uma alteração à data
+ * anterior, e a aplicação pedia justificação para um campo que a pessoa ainda
+ * estava a preencher pela primeira vez. Agora escolher e corrigir é uma coisa
+ * só. A pausa existe porque o calendário fecha sem tirar o foco do campo: sem
+ * ela, uma data escolhida e deixada assim nunca chegava a ser gravada.
+ */
+function CampoData({ id, valor, disabled, rotulo, onGuardar }) {
+  const [v, setV] = useState(valor ?? "");
+  const focado = useRef(false);
+  const timer = useRef(null);
+  const enviado = useRef(valor ?? "");
+
+  useEffect(() => {
+    enviado.current = valor ?? "";
+    if (!focado.current) setV(valor ?? "");
+  }, [valor]);
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  const entregar = (novo) => {
+    clearTimeout(timer.current);
+    if ((enviado.current ?? "") === (novo ?? "")) return;
+    enviado.current = novo ?? "";
+    onGuardar(novo);
+  };
+
+  return (
+    <input
+      className="field" id={id} type="date" value={v} disabled={disabled} aria-label={rotulo}
+      onFocus={() => { focado.current = true; }}
+      onChange={(e) => {
+        const novo = e.target.value;
+        setV(novo);
+        clearTimeout(timer.current);
+        timer.current = setTimeout(() => entregar(novo), 1200);
+      }}
+      onBlur={(e) => { focado.current = false; entregar(e.target.value); }}
+    />
+  );
+}
+
 export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
   const {
     tasks, statuses, projects, pessoas, comments, historico = [], attachments,
@@ -100,14 +144,11 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
 
   const patch = (campos) => patchTarefa(t.id, campos);
 
-  /* Marcar uma data vazia é planear: qualquer editor a põe, sem cerimónia.
-     Mexer numa que já lá estava muda o plano de toda a gente — é de super
-     admin, e pergunta-se porquê antes de gravar. É o que fica no histórico
-     quando alguém quiser perceber a derrapagem daqui a seis meses. */
-  const podeMexerNaData = (campo) => {
-    if (!podeCriar) return false;
-    return t[campo] == null || souAdmin;
-  };
+  /* Marcar uma data vazia é planear: vai direto. Mexer numa que já lá estava
+     muda o plano de toda a gente, e aí pergunta-se porquê antes de gravar — é
+     o que fica no histórico quando alguém quiser perceber a derrapagem daqui a
+     seis meses. Quem edita são os dois editores. */
+  const podeMexerNaData = () => podeCriar;
 
   function novasDatas(campo, valor) {
     const d = { inicio: t.inicio, fim: t.fim, [campo]: valor || null };
@@ -116,24 +157,22 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
     return d;
   }
 
+  /* Preencher é escrever onde não havia nada. Se o que se está a escrever
+     arrasta a outra data, que já estava marcada, isso é alterar — mesmo que o
+     campo mexido estivesse vazio. */
+  const soPreenche = (d) =>
+    (d.inicio === t.inicio || t.inicio == null) &&
+    (d.fim === t.fim || t.fim == null);
+
   async function pedirData(campo, valor) {
-    const outro = campo === "inicio" ? "fim" : "inicio";
     const d = novasDatas(campo, valor);
-    /* Preencher uma data vazia não pode servir de atalho para arrastar a
-       outra, que já estava marcada — isso é uma alteração. */
-    if (!souAdmin && t[outro] != null && d[outro] !== t[outro]) {
-      setErroData(campo === "inicio"
-        ? "Esse início é depois do fim já marcado. Só um super admin pode mexer no fim."
-        : "Esse fim é antes do início já marcado. Só um super admin pode mexer no início.");
-      setMudarData(null);
-      return;
-    }
-    if (t[campo] == null) {
+    if (d.inicio === t.inicio && d.fim === t.fim) return;
+    if (soPreenche(d)) {
       setErroData("");
       await alterarDatas(t.id, d, null);
       return;
     }
-    setMudarData({ campo, valor });
+    setMudarData({ campo, valor, arrastou: d[campo === "inicio" ? "fim" : "inicio"] });
     setDataPorque("");
     setErroData("");
   }
@@ -327,20 +366,18 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
           <div className="frow">
             <div className="fgroup">
               <label htmlFor="d-inicio">Início</label>
-              <input className="field" id="d-inicio" type="date" disabled={!podeMexerNaData("inicio")}
-                value={mudarData?.campo === "inicio" ? mudarData.valor : (t.inicio || "")}
-                onChange={(e) => pedirData("inicio", e.target.value)} />
-              {!podeCriar ? (
+              <CampoData id="d-inicio" rotulo="Início" disabled={!podeMexerNaData()}
+                valor={mudarData?.campo === "inicio" ? mudarData.valor : (t.inicio || "")}
+                onGuardar={(v) => pedirData("inicio", v)} />
+              {!podeCriar && (
                 <span className="co-note">O teu acesso não permite definir datas.</span>
-              ) : t.inicio != null && !souAdmin ? (
-                <span className="co-note">Marcada. Só um super admin a pode alterar.</span>
-              ) : null}
+              )}
             </div>
             <div className="fgroup">
               <label htmlFor="d-fim">Fim (real)</label>
-              <input className="field" id="d-fim" type="date" disabled={!podeMexerNaData("fim")}
-                value={mudarData?.campo === "fim" ? mudarData.valor : (t.fim || "")}
-                onChange={(e) => pedirData("fim", e.target.value)} />
+              <CampoData id="d-fim" rotulo="Fim (real)" disabled={!podeMexerNaData()}
+                valor={mudarData?.campo === "fim" ? mudarData.valor : (t.fim || "")}
+                onGuardar={(v) => pedirData("fim", v)} />
 
               <span className={"co-note" + (sd > 0 ? " warnnote" : sd < 0 ? " oknote" : "")}>
                 {!t.fim_previsto
@@ -359,7 +396,7 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
                   <button className="linkbtn" onClick={() => setRebase(true)}>Repor data prevista</button>
                 ) : podeCriar ? (
                   <span className="co-note">
-                    Só um super admin pode repor a data prevista, com justificação.
+                    Repor a data prevista — apagar a referência do plano — é só de super admin.
                   </span>
                 ) : null
               )}
@@ -396,8 +433,15 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
                 {mudarData.campo === "inicio" ? "Início" : "Fim"}:{" "}
                 {fmtShort(mudarData.campo === "inicio" ? t.inicio : t.fim) || "sem data"} →{" "}
                 {fmtShort(mudarData.valor) || "sem data"}. Fica registado nos comentários, com o
-                teu nome. As tarefas que dependem desta são empurradas, se for preciso.
+                teu nome, no histórico da tarefa. As tarefas que dependem desta são
+                empurradas, se for preciso.
               </p>
+              {mudarData.arrastou && (
+                <p className="hintline warnnote">
+                  Isto também mexe {mudarData.campo === "fim" ? "no início" : "no fim"}, que já
+                  estava marcado: passa para {fmtShort(mudarData.arrastou)}.
+                </p>
+              )}
               <textarea className="field" rows="2" value={dataPorque} aria-label="Justificação da data"
                 placeholder="Porque é que a data mudou? (obrigatório)"
                 onChange={(e) => { setDataPorque(e.target.value); setErroData(""); }} />
@@ -414,14 +458,14 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
           )}
 
           {/* Custo. Todo o valor em euros é gravado pela função do servidor, que
-              obriga a justificar — o primeiro orçamento e cada alteração. Quem
-              altera um que já está gravado tem de ser super admin. A base de
-              dados recusa na mesma se alguém contornar o ecrã. */}
+              obriga a justificar — o primeiro orçamento e cada alteração — e
+              deixa registo no histórico. A base de dados recusa na mesma se
+              alguém contornar o ecrã. */}
           <div className="fgroup">
             <label>Custo</label>
             <label className="chk">
               <input type="checkbox" checked={!!t.tem_custo}
-                disabled={!podeEscrever || temOrcamento}
+                disabled={!podeCriar || temOrcamento}
                 onChange={(e) => patch({ tem_custo: e.target.checked })} />
               Esta tarefa tem custo
             </label>
@@ -431,10 +475,9 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
                 <div className="rebaseform">
                   <p className="hintline">
                     {temOrcamento
-                      ? <>Orçamento atual: {eur(t.custo_previsto)}. O valor antigo fica registado nos
-                          comentários, com quem o mudou e porquê. Deixa em branco para o retirar.</>
-                      : <>O valor e a razão ficam registados nos comentários, com o teu nome.
-                          Depois de gravado, só um super admin o altera.</>}
+                      ? <>Orçamento atual: {eur(t.custo_previsto)}. O valor antigo fica no histórico
+                          da tarefa, com quem o mudou e porquê. Deixa em branco para o retirar.</>
+                      : <>O valor e a razão ficam no histórico da tarefa, com o teu nome.</>}
                   </p>
                   <input className="field" value={orcNovo} inputMode="decimal"
                     aria-label={temOrcamento ? "Novo orçamento" : "Orçamento previsto"}
@@ -462,17 +505,13 @@ export default function TaskDrawer({ ctx, tarefaId, onFechar, onAjustar }) {
                     Orçamento previsto.
                     {mexidasOrc > 0 && <span className="rebadge"> alterado {mexidasOrc}×</span>}
                   </span>
-                  {souAdmin ? (
+                  {podeCriar && (
                     <button className="linkbtn" onClick={() => {
                       setMudarOrc(true); setOrcNovo(String(t.custo_previsto)); setErroOrc("");
                     }}>Alterar orçamento</button>
-                  ) : podeEscrever ? (
-                    <span className="co-note">
-                      Só um super admin pode alterar um orçamento já gravado, com justificação.
-                    </span>
-                  ) : null}
+                  )}
                 </>
-              ) : podeEscrever ? (
+              ) : podeCriar ? (
                 <button className="linkbtn" onClick={() => {
                   setMudarOrc(true); setOrcNovo(""); setOrcPorque(""); setErroOrc("");
                 }}>Gravar orçamento</button>

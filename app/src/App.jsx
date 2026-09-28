@@ -6,6 +6,7 @@ import { useFotos } from "./data/useFotos.js";
 import { PRIORIDADES, SETORES } from "./lib/format.js";
 import Auth from "./components/Auth.jsx";
 import Sidebar from "./components/Sidebar.jsx";
+import NovaTarefa from "./components/NovaTarefa.jsx";
 import Board from "./components/Board.jsx";
 import ProjectBoard from "./components/ProjectBoard.jsx";
 import Gantt from "./components/Gantt.jsx";
@@ -150,22 +151,11 @@ function Quadro({ session }) {
     { id: "__sem__", nome: "Sem responsável", n: base.filter((t) => !t.assignees.length).length }
   ], [pessoas, base]);
 
-  async function criarTarefa(statusId, projectId) {
-    const status = statusId || statuses[0]?.id;
-    if (!status) return;
-    const pid = projectId
-      ?? (filtroProjetos?.length === 1 ? filtroProjetos[0] : projects.find((p) => !p.arquivado)?.id ?? null);
-    const maior = Math.max(0, ...tasks.filter((t) => t.status_id === status).map((t) => t.posicao || 0));
-    const r = await guardar(async () => {
-      const ins = await supabase.from("pm_tasks")
-        .insert({ titulo: "", project_id: pid, status_id: status, prioridade: "media", progresso: 0, posicao: maior + 1000 })
-        .select("id").single();
-      if (ins.error) return ins;
-      setAberta(ins.data.id);
-      return ins;
-    });
-    return r;
-  }
+  /* Abrir o formulário, não criar a linha. A tarefa só passa a existir quando
+     a pessoa carregar em Adicionar tarefa, com tudo preenchido de uma vez. */
+  const [aCriar, setACriar] = useState(null);   // { statusId, projectId }
+  const criarTarefa = useCallback(
+    (statusId = null, projectId = null) => setACriar({ statusId, projectId }), []);
 
   const ajustar = useCallback(async (id, silencioso) => {
     const r = await ajustarDependencias(id ?? null);
@@ -266,6 +256,11 @@ function Quadro({ session }) {
           {vista === "alertas" && <Alerts ctx={ctx} />}
         </div>
       </div>
+
+      {aCriar && (
+        <NovaTarefa ctx={ctx} statusId={aCriar.statusId} projectId={aCriar.projectId}
+          onFechar={() => setACriar(null)} />
+      )}
 
       {aberta && (
         <TaskDrawer ctx={ctx} tarefaId={aberta} onFechar={() => setAberta(null)} onAjustar={ajustar} />

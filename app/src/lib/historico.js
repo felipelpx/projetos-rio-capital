@@ -66,6 +66,13 @@ export function descrever(l, ctx) {
       /* As notas são texto corrido: dizer "de … para …" enchia o histórico.
          Mostra-se que mudaram, e o que lá está agora vê-se no campo. */
       if (l.campo === "notas") return { titulo: "Alterou as notas" };
+      /* Escrever onde não havia nada não é alterar, e "— → 18 dez" lê-se mal. */
+      if (l.de == null || l.de === "") {
+        return { titulo: "Marcou " + nome, detalhe: valor(l.campo, l.para, ctx) };
+      }
+      if (l.para == null || l.para === "") {
+        return { titulo: "Retirou " + nome, detalhe: valor(l.campo, l.de, ctx) };
+      }
       return {
         titulo: "Alterou " + nome,
         detalhe: valor(l.campo, l.de, ctx) + " → " + valor(l.campo, l.para, ctx)

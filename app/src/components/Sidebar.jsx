@@ -254,7 +254,7 @@ export default function Sidebar({
             </p>
             <p className="hintline">
               Uma data ou um orçamento por marcar preenche-se sem cerimónia. Alterar o que já lá
-              está é de super admin, e leva justificação, que fica nos comentários da tarefa.
+              está leva justificação, e fica no histórico da tarefa com o valor antigo.
             </p>
             <p className="hintline">
               {acesso?.role === "admin"

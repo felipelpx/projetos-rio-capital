@@ -6,7 +6,7 @@
 -- consegue fazer, e apaga-se a si próprio no fim.
 --
 -- Cada bloco imprime "OK" ou "FALHA". Se aparecer uma FALHA, não avançar.
--- São 35 verificações, sobre os quatro papéis.
+-- São 36 verificações, sobre os quatro papéis.
 --
 -- Em Supabase corre-se tudo de uma vez (Run). O `set request.jwt.claim.sub`
 -- finge que somos cada um dos utilizadores.
@@ -110,12 +110,12 @@ begin
   perform set_config('request.jwt.claim.sub', v_parc::text, true);
 
   begin
-    update public.pm_tasks set tem_custo = true where id = v_task;
+    update public.pm_tasks set custo_previsto = 500 where id = v_task;
     n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Editor parcial NÃO mexe em custos', 'FALHA — mexeu');
+    values (n, 'Editor parcial NÃO grava euros sem justificação', 'FALHA — gravou');
   exception when others then
     n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Editor parcial NÃO mexe em custos', 'OK');
+    values (n, 'Editor parcial NÃO grava euros sem justificação', 'OK');
   end;
 
   begin
@@ -129,10 +129,10 @@ begin
   begin
     update public.pm_tasks set fim = current_date + 99 where id = v_task;
     n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Editor parcial NÃO altera datas já marcadas', 'FALHA — mexeu');
+    values (n, 'Editor parcial NÃO muda datas sem justificação', 'FALHA — mexeu');
   exception when others then
     n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Editor parcial NÃO altera datas já marcadas', 'OK');
+    values (n, 'Editor parcial NÃO muda datas sem justificação', 'OK');
   end;
 
   begin
@@ -153,10 +153,24 @@ begin
   begin
     update public.pm_tasks set fim = current_date + 9 where titulo = '__datas_parcial__';
     n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Editor parcial NÃO volta atrás na data que pôs', 'FALHA — mexeu');
+    values (n, 'Editor parcial NÃO volta atrás sem justificar', 'FALHA — mexeu');
   exception when others then
     n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Editor parcial NÃO volta atrás na data que pôs', 'OK');
+    values (n, 'Editor parcial NÃO volta atrás sem justificar', 'OK');
+  end;
+
+  begin
+    perform public.pm_alterar_datas(
+      (select id from public.pm_tasks where titulo = '__datas_parcial__'),
+      current_date, current_date + 9, 'o cliente pediu mais uma semana');
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor parcial altera datas, com justificação',
+            case when (select fim from public.pm_tasks where titulo = '__datas_parcial__')
+                      = current_date + 9 then 'OK' else 'FALHA — a data não mudou' end);
+  exception when others then
+    get stacked diagnostics v_erro = message_text;
+    n := n + 1; insert into _res (ordem, o_que, resultado)
+    values (n, 'Editor parcial altera datas, com justificação', 'FALHA — ' || left(v_erro, 40));
   end;
 
   begin
@@ -232,10 +246,13 @@ begin
   begin
     perform public.pm_alterar_datas(v_task, current_date, current_date + 20, 'obra atrasou-se');
     n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Editor NÃO altera datas, nem com justificação', 'FALHA — alterou');
+    values (n, 'Editor altera datas, com justificação',
+            case when (select fim from public.pm_tasks where id = v_task) = current_date + 20
+                 then 'OK' else 'FALHA — a data não mudou' end);
   exception when others then
+    get stacked diagnostics v_erro = message_text;
     n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Editor NÃO altera datas, nem com justificação', 'OK');
+    values (n, 'Editor altera datas, com justificação', 'FALHA — ' || left(v_erro, 40));
   end;
 
   begin
@@ -296,12 +313,15 @@ begin
   end;
 
   begin
-    perform public.pm_definir_orcamento(v_task, 9999, 'tentativa de editor');
+    perform public.pm_definir_orcamento(v_task, 9999, 'revisão do empreiteiro');
     n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Editor NÃO altera pela função o que já está gravado', 'FALHA — usou');
+    values (n, 'Editor altera o orçamento, com justificação',
+            case when (select custo_previsto from public.pm_tasks where id = v_task) = 9999
+                 then 'OK' else 'FALHA — o valor não mudou' end);
   exception when others then
+    get stacked diagnostics v_erro = message_text;
     n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Editor NÃO altera pela função o que já está gravado', 'OK');
+    values (n, 'Editor altera o orçamento, com justificação', 'FALHA — ' || left(v_erro, 40));
   end;
 
   ---------------------------------------------------------------- super admin
@@ -310,13 +330,13 @@ begin
   begin
     perform public.pm_alterar_datas(v_task, current_date, current_date + 20, 'obra atrasou-se');
     n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Super admin altera o fim real, com justificação',
+    values (n, 'Super admin também altera, com justificação',
             case when (select fim from public.pm_tasks where id = v_task) = current_date + 20
                  then 'OK' else 'FALHA — a data não mudou' end);
   exception when others then
     get stacked diagnostics v_erro = message_text;
     n := n + 1; insert into _res (ordem, o_que, resultado)
-    values (n, 'Super admin altera o fim real, com justificação', 'FALHA — ' || left(v_erro, 40));
+    values (n, 'Super admin também altera, com justificação', 'FALHA — ' || left(v_erro, 40));
   end;
 
   begin
@@ -364,7 +384,7 @@ begin
     values (n, 'A alteração do orçamento deixou registo',
             case when exists (select 1 from public.pm_task_log
                                where task_id = v_task and tipo = 'campo' and campo = 'custo_previsto'
-                                 and de like '1000%' and para like '2500%')
+                                 and de like '9999%' and para like '2500%')
                  then 'OK' else 'FALHA — sem registo' end);
   end;
 
