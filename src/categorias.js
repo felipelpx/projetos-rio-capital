@@ -4,6 +4,7 @@
 // continuam visíveis nos registos, marcados como "(antiga)".
 
 export const CATEGORIAS = [
+  "Aporte",
   "Cartão Crédito",
   "CSC (Lisbon)",
   "CSC (London)",

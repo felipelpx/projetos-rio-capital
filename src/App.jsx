@@ -18,7 +18,7 @@ import { EMPRESAS, labelEmpresa } from "./empresas.js";
 
 // Versão publicada — aparece ao lado do título, para se saber logo que
 // pacote está no ar. Atualizar a cada entrega.
-const VERSAO_ERP = "v135";
+const VERSAO_ERP = "v136";
 import { REAL_ORCADO_PROJECTS } from "./planos.js";
 import { fmtEuro, fmtEuroK, fmtNum, fmtInt, fmtPercent } from "./format.js";
 
