@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html>
+<head><title>Corrigir Saldos — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:1200px;margin:0 auto}
+  h1{color:#C8A96E}
+  button{background:#C8A96E;border:none;padding:11px 22px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px}
+  button:disabled{opacity:0.5;cursor:default}
+  button.danger{background:#dc2626;color:#fff}
+  button.secondary{background:#666;color:#fff}
+  select,input{background:#1a1a2e;color:#fff;border:1px solid #444;padding:8px;border-radius:6px;font-family:monospace;font-size:13px;margin:5px}
+  .desc{background:#1a1a2e;padding:14px;border-radius:8px;border-left:4px solid #C8A96E;margin:12px 0;font-size:12px;line-height:1.6}
+  #drop{border:2px dashed #555;border-radius:12px;padding:50px;text-align:center;color:#888;font-size:14px;cursor:pointer;margin:12px 0;transition:all .15s}
+  #drop.dragover{border-color:#C8A96E;background:#1a1a2e;color:#C8A96E}
+  #log{background:#1a1a2e;padding:18px;border-radius:8px;max-height:600px;overflow-y:auto;margin-top:18px;font-size:11px;line-height:1.55}
+  table{width:100%;border-collapse:collapse;font-size:11px}
+  th,td{padding:5px 8px;border-bottom:1px solid #2a2a3e;text-align:left}
+  th{color:#C8A96E;position:sticky;top:0;background:#1a1a2e;z-index:1}
+  .ok{color:#16a34a}.err{color:#dc2626}.info{color:#C8A96E}.warn{color:#f59e0b}.muted{color:#888}
+  .num{text-align:right;font-family:monospace}
+</style>
+</head>
+<body>
+<h1>🔧 Corrigir Saldos a partir do Excel</h1>
+
+<div class="desc">
+  <strong>O que isto faz:</strong> recebe o Excel mestre (com saldos corretos por movimento) e compara, para cada aba, com os movimentos no Supabase. Faz <strong>match</strong> usando a chave <code>data + descrição + valor</code>. Atualiza apenas o campo <strong>saldo</strong> — nada mais é tocado.<br><br>
+  <strong>Apenas processa movimentos com <code>data ≥ data mínima</code></strong> (ajusta abaixo). Os anteriores são ignorados.<br><br>
+  <strong>Fluxo:</strong> arrasta o ficheiro → corre <strong>Dry-run</strong> → revê o relatório → carrega <strong>Aplicar</strong> apenas se tudo bater certo.
+</div>
+
+<div id="drop">📥 Arrasta aqui o ficheiro Excel (.xlsx, .xlsm)<br><span style="font-size:11px;color:#666">ou clica para escolher</span></div>
+<input id="fileInput" type="file" accept=".xlsx,.xlsm,.xls" style="display:none">
+
+<div id="actions" style="display:none;margin-top:14px">
+  <label style="margin-right:14px">Data mínima: <input id="fromDate" type="date" value="2026-01-01"></label>
+  <button onclick="run(true)">🔍 Dry-run (não escreve)</button>
+  <button onclick="run(false)" class="danger">⚠️ Aplicar updates</button>
+  <button onclick="resetAll()" class="secondary">🔁 Resetar</button>
+</div>
+
+<div id="log"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Mapeamento aba Excel → conta_id na Supabase (vem do EMPRESAS no App.jsx).
+// Tirado do snapshot caixa_unico_v2.json.
+const SHEET_TO_CONTA = {
+  "Rio Cartão 7449": "riocap_cartão_7449",
+  "Rio Caixa livre": "riocap_caixa_livre",
+  "Rio Capital BCP": "riocap_bcp",
+  "Decadexperience - BCP": "decadex_bcp",
+  "Visionary Story Banco Invest": "visionary_banco_invest",
+  "BM HOLDING Banco Invest": "barramansa_banco_invest",
+  "BM HOLDING Miami": "barramansa_miami_eua",
+  "BM Revolut": "barramansa_revolut",
+  "BM HOLDING BBAmericas": "barramansa_bb_americas",
+  "Curious Euphory BCP": "curious_bcp",
+  "Modernity BCP": "modernity_bcp",
+  "Without Delays BCP": "wodelay_bcp",
+  "Nimitz BAE": "nimitz_banco_atlântico",
+  "Alternative Shadow BCP": "shadow_bcp",
+  "CLASSIC REVELATION BNI": "classic_bni",
+  "Enigma Imperdivel BCP": "enigma_bcp",
+  "Nimitz Revolut": "nimitz_revolut",
+  "Nimitz Miami": "nimitz_miami_eua",
+  "Zuka BAE": "zuka_banco_atlântico",
+  "SILABAS E COLUNAS BNI": "silabas_bni",
+};
+
+let parsedWorkbook = null;
+let authed = false;
+
+const drop = document.getElementById('drop');
+const fileInput = document.getElementById('fileInput');
+const log = document.getElementById('log');
+const actions = document.getElementById('actions');
+
+drop.onclick = () => fileInput.click();
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('dragover'); };
+drop.ondragleave = () => drop.classList.remove('dragover');
+drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('dragover'); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); };
+fileInput.onchange = (e) => { if (e.target.files[0]) handleFile(e.target.files[0]); };
+
+async function handleFile(f) {
+  log.innerHTML = `<div class="info">A ler ${f.name} (${(f.size/1024/1024).toFixed(2)} MB)...</div>`;
+  const buf = await f.arrayBuffer();
+  parsedWorkbook = XLSX.read(buf, { type: 'array', cellDates: true });
+  log.innerHTML += `<div class="ok">✅ ${parsedWorkbook.SheetNames.length} abas carregadas: ${parsedWorkbook.SheetNames.slice(0,10).join(', ')}${parsedWorkbook.SheetNames.length > 10 ? '...' : ''}</div>`;
+  drop.style.display = 'none';
+  actions.style.display = 'block';
+}
+
+function resetAll() {
+  parsedWorkbook = null;
+  drop.style.display = 'block';
+  actions.style.display = 'none';
+  log.innerHTML = '';
+}
+
+async function ensureAuth() {
+  if (authed) return true;
+  const pwd = prompt('Palavra-passe do felipe@riocapital.pt:');
+  if (!pwd) return false;
+  const { error } = await client.auth.signInWithPassword({ email: 'felipe@riocapital.pt', password: pwd });
+  if (error) { alert('Login falhou: ' + error.message); return false; }
+  authed = true;
+  return true;
+}
+
+// Normalizar valor: aceita string ou número, devolve float arredondado a 2 casas
+function safeFloat(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number') return Math.round(v * 100) / 100;
+  let s = v.toString().trim().replace(/[€$£\s]/g, '');
+  if (s.includes('.') && s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  else if (s.includes(',') && !s.includes('.')) s = s.replace(',', '.');
+  const f = parseFloat(s);
+  return isNaN(f) ? null : Math.round(f * 100) / 100;
+}
+
+function normalizeDate(v) {
+  if (!v) return null;
+  if (v instanceof Date) {
+    const y = v.getFullYear(), m = String(v.getMonth()+1).padStart(2,'0'), d = String(v.getDate()).padStart(2,'0');
+    return `${y}-${m}-${d}`;
+  }
+  const s = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0,10);
+  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  return null;
+}
+
+// Remove acentos, lowercase, colapsa espaços
+function normalize(s) {
+  if (!s) return '';
+  return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function key(data, desc, valor) {
+  return `${data}||${(desc||'').trim()}||${valor}`;
+}
+
+// Lê uma aba do Excel e devolve [{data, desc, valor, saldo}]
+function parseSheet(sheetName) {
+  const ws = parsedWorkbook.Sheets[sheetName];
+  if (!ws) return [];
+  // Cabeçalho: detectar linha que tem "Data" e "Descritivo"
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+  let headerIdx = -1;
+  for (let i = 0; i < Math.min(8, rows.length); i++) {
+    const cells = (rows[i] || []).map(c => (c == null ? '' : String(c)).toLowerCase().trim());
+    if (cells.some(c => c.includes('data')) && cells.some(c => c.includes('descritivo') || c.includes('descri'))) {
+      headerIdx = i;
+      break;
+    }
+  }
+  if (headerIdx < 0) return [];
+  const headers = rows[headerIdx].map(c => (c == null ? '' : String(c)).toLowerCase().trim());
+  const colData = headers.findIndex(h => h === 'data');
+  const colDesc = headers.findIndex(h => h.startsWith('descri'));
+  const colDeb = headers.findIndex(h => h.startsWith('débit') || h.startsWith('debit'));
+  const colCred = headers.findIndex(h => h.startsWith('crédit') || h.startsWith('credit'));
+  const colSaldo = headers.findIndex(h => h.includes('saldo'));
+  if (colData < 0 || colDesc < 0 || colSaldo < 0) return [];
+
+  const out = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const r = rows[i] || [];
+    const data = normalizeDate(r[colData]);
+    const desc = r[colDesc];
+    if (!data || !desc) continue;
+    const deb = colDeb >= 0 ? safeFloat(r[colDeb]) : null;
+    const cred = colCred >= 0 ? safeFloat(r[colCred]) : null;
+    let valor = null;
+    if (cred != null && deb == null) valor = cred;
+    else if (deb != null && cred == null) valor = deb;
+    else if (cred != null && deb != null) valor = (deb || 0) + (cred || 0);
+    if (valor == null) continue;
+    const saldo = safeFloat(r[colSaldo]);
+    if (saldo == null) continue;
+    out.push({ data, desc: String(desc).trim(), valor, saldo });
+  }
+  return out;
+}
+
+async function run(dryRun) {
+  if (!parsedWorkbook) { alert('Carrega o Excel primeiro'); return; }
+  if (!await ensureAuth()) return;
+
+  const fromDate = (document.getElementById('fromDate').value || '2026-01-01');
+  log.innerHTML = `<div class="info">A processar (apenas data ≥ ${fromDate})...</div>`;
+  let html = '';
+
+  let grandUpdated = 0;
+  let grandToUpdate = 0;
+  let grandMatched = 0;
+  let grandNoMatch = 0;
+  let grandSheets = 0;
+  let grandErrors = 0;
+  const sheetsWithoutMapping = [];
+
+  for (const sheetName of parsedWorkbook.SheetNames) {
+    const contaId = SHEET_TO_CONTA[sheetName];
+    if (!contaId) {
+      sheetsWithoutMapping.push(sheetName);
+      continue;
+    }
+    grandSheets++;
+
+    // Lê o Excel e filtra pela data mínima
+    const excelRowsAll = parseSheet(sheetName);
+    const excelRows = excelRowsAll.filter(r => r.data >= fromDate);
+    if (excelRows.length === 0) {
+      html += `<div class="muted">⊘ ${sheetName} (${contaId}): 0 linhas no Excel após ${fromDate}</div>`;
+      log.innerHTML = html;
+      continue;
+    }
+    // Anotar 'used' em cada linha para garantir match 1-para-1
+    excelRows.forEach(r => { r.used = false; });
+    // Index exato
+    const exatoIdx = new Map();
+    // Index data+valor (relaxado)
+    const dvIdx = new Map();
+    excelRows.forEach((r, i) => {
+      const k = key(r.data, r.desc, r.valor);
+      if (!exatoIdx.has(k)) exatoIdx.set(k, []);
+      exatoIdx.get(k).push(i);
+      const k2 = `${r.data}||${r.valor}`;
+      if (!dvIdx.has(k2)) dvIdx.set(k2, []);
+      dvIdx.get(k2).push(i);
+    });
+
+    // Pull movimentos da Supabase para esta conta (apenas a partir de fromDate)
+    let all = [], offset = 0;
+    while (true) {
+      const { data, error } = await client.from('movimentos')
+        .select('id, data, movimento, valor, saldo')
+        .eq('conta_id', contaId)
+        .gte('data', fromDate)
+        .range(offset, offset + 999);
+      if (error) { html += `<div class="err">❌ ${contaId}: ${error.message}</div>`; log.innerHTML = html; break; }
+      if (!data?.length) break;
+      all = all.concat(data);
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+
+    let mExato = 0, mDvUnico = 0, mDvNorm = 0, ambiguo = 0, noMatch = 0, toUpdate = 0, ok = 0;
+    const diffsToApply = []; // {id, oldSaldo, newSaldo, desc, data, matchType}
+
+    for (const m of all) {
+      const valorR = Math.round(parseFloat(m.valor) * 100) / 100;
+      let chosenIdx = -1;
+      let matchType = '';
+
+      // 1. Match EXATO
+      const cands = exatoIdx.get(key(m.data, m.movimento, valorR)) || [];
+      for (const ci of cands) {
+        if (!excelRows[ci].used) { chosenIdx = ci; matchType = 'exato'; mExato++; break; }
+      }
+
+      if (chosenIdx < 0) {
+        // 2. Match DATA+VALOR
+        const cands2 = (dvIdx.get(`${m.data}||${valorR}`) || []).filter(ci => !excelRows[ci].used);
+        if (cands2.length === 1) {
+          chosenIdx = cands2[0]; matchType = 'dv-único'; mDvUnico++;
+        } else if (cands2.length > 1) {
+          // 3. Tentar resolver com descrição normalizada
+          const dn = normalize(m.movimento);
+          const normMatches = cands2.filter(ci => normalize(excelRows[ci].desc) === dn);
+          if (normMatches.length === 1) {
+            chosenIdx = normMatches[0]; matchType = 'dv-norm'; mDvNorm++;
+          } else {
+            ambiguo++;
+          }
+        } else {
+          noMatch++;
+        }
+      }
+
+      if (chosenIdx >= 0) {
+        excelRows[chosenIdx].used = true;
+        const newSaldo = excelRows[chosenIdx].saldo;
+        const oldSaldo = Math.round(parseFloat(m.saldo) * 100) / 100;
+        if (Math.abs(newSaldo - oldSaldo) > 0.01) {
+          toUpdate++;
+          diffsToApply.push({ id: m.id, oldSaldo, newSaldo, desc: m.movimento, data: m.data, matchType });
+        } else {
+          ok++;
+        }
+      }
+    }
+    const totalMatched = mExato + mDvUnico + mDvNorm;
+    grandMatched += totalMatched;
+    grandNoMatch += noMatch + ambiguo;
+    grandToUpdate += toUpdate;
+
+    html += `<div class="info">📋 <strong>${sheetName}</strong> → ${contaId}</div>`;
+    html += `<div class="muted">  Excel: ${excelRows.length} linhas · Supabase: ${all.length} mov</div>`;
+    html += `<div>  Match: <span class="ok">${mExato} exato</span> · <span class="info">${mDvUnico} d+v único</span> · <span class="info">${mDvNorm} d+v normalizado</span> · <span class="warn">${ambiguo} ambíguos</span> · <span class="err">${noMatch} sem match</span></div>`;
+    html += `<div>  Saldos: <span class="muted">${ok} já OK</span> · <span class="warn">${toUpdate} a corrigir</span></div>`;
+
+    // Mostrar primeiros 5 diffs
+    if (diffsToApply.length > 0) {
+      html += '<div style="margin:6px 0 10px 0;background:#0f0f1a;border-radius:6px;padding:8px"><table><thead><tr><th>match</th><th>data</th><th>descrição</th><th class="num">saldo antigo</th><th class="num">saldo novo</th><th class="num">Δ</th></tr></thead><tbody>';
+      diffsToApply.slice(0, 5).forEach(d => {
+        const delta = d.newSaldo - d.oldSaldo;
+        const mtColor = d.matchType === 'exato' ? 'ok' : 'info';
+        html += `<tr><td><span class="${mtColor}">${d.matchType}</span></td><td>${d.data}</td><td>${d.desc.substring(0,40)}</td><td class="num">${d.oldSaldo.toLocaleString('pt-PT',{minimumFractionDigits:2})}</td><td class="num">${d.newSaldo.toLocaleString('pt-PT',{minimumFractionDigits:2})}</td><td class="num ${delta>=0?'ok':'err'}">${delta>=0?'+':''}${delta.toFixed(2)}</td></tr>`;
+      });
+      if (diffsToApply.length > 5) html += `<tr><td colspan="6" class="muted">...mais ${diffsToApply.length - 5} linhas</td></tr>`;
+      html += '</tbody></table></div>';
+    }
+
+    log.innerHTML = html;
+
+    // Aplicar updates (se não dry-run)
+    if (!dryRun && diffsToApply.length > 0) {
+      let upOk = 0, upErr = 0;
+      // Batches de 50 em paralelo
+      for (let i = 0; i < diffsToApply.length; i += 50) {
+        const chunk = diffsToApply.slice(i, i + 50);
+        const results = await Promise.all(chunk.map(d =>
+          client.from('movimentos').update({ saldo: d.newSaldo }).eq('id', d.id)
+        ));
+        results.forEach(r => { if (r.error) { upErr++; console.error(r.error); } else upOk++; });
+      }
+      grandUpdated += upOk;
+      grandErrors += upErr;
+      html += `<div class="ok">  ✅ Aplicado: ${upOk}/${diffsToApply.length}` + (upErr ? ` <span class="err">(${upErr} erros)</span>` : ``) + '</div><br>';
+      log.innerHTML = html;
+    } else {
+      html += '<br>';
+    }
+  }
+
+  // Resumo
+  html += '<br>';
+  html += `<div class="info">═══════════════════════════════════════════</div>`;
+  html += `<div class="info"><strong>RESUMO</strong> · data ≥ ${fromDate} ${dryRun ? '(DRY-RUN — nada foi escrito)' : ''}</div>`;
+  html += `<div>  Abas processadas: ${grandSheets}</div>`;
+  html += `<div>  Total matches: <span class="ok">${grandMatched}</span></div>`;
+  html += `<div>  Total sem match: <span class="warn">${grandNoMatch}</span></div>`;
+  html += `<div>  Saldos a corrigir: <span class="warn">${grandToUpdate}</span></div>`;
+  if (!dryRun) html += `<div>  <span class="ok">Saldos atualizados: ${grandUpdated}</span>${grandErrors ? ' <span class="err">('+grandErrors+' erros)</span>' : ''}</div>`;
+  if (sheetsWithoutMapping.length > 0) {
+    html += `<br><div class="muted">⊘ Abas ignoradas (sem mapeamento conta_id): ${sheetsWithoutMapping.length}</div>`;
+    html += `<div class="muted" style="font-size:10px">  ${sheetsWithoutMapping.join(' · ')}</div>`;
+  }
+  log.innerHTML = html;
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head><title>Setup comentários e rateios — Rio Capital ERP</title>
+<meta charset="utf-8"/>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:900px;margin:0 auto;line-height:1.6}
+  h1{color:#C8A96E}
+  pre{background:#1a1a2e;padding:18px;border-radius:8px;overflow-x:auto;border-left:4px solid #C8A96E;font-size:13px;white-space:pre-wrap;word-break:break-word}
+  button{background:#C8A96E;border:none;padding:11px 22px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px}
+  .step{background:#1a1a2e;padding:18px;border-radius:8px;margin:14px 0}
+  .step-num{display:inline-block;background:#C8A96E;color:#0f0f1a;border-radius:50%;width:28px;height:28px;text-align:center;line-height:28px;font-weight:bold;margin-right:8px}
+  .ok{color:#16a34a}.err{color:#dc2626}.warn{color:#f59e0b}
+  a{color:#C8A96E}
+  #result{margin-top:14px;padding:14px;border-radius:6px;display:none}
+</style>
+</head>
+<body>
+<h1>💬 Setup — comentários e divisão de movimentos</h1>
+
+<p>Duas funcionalidades novas precisam de tabelas que ainda não existem: os <strong>comentários</strong> nas linhas do extrato (<code>movimento_comentarios</code>) e a <strong>divisão de um movimento por várias categorias</strong> (<code>movimento_rateios</code>). Corre o SQL abaixo uma única vez — cria as duas.</p>
+
+<button onclick="verificar()">🔍 Verificar se já está criada</button>
+<div id="result"></div>
+
+<div class="step">
+  <h3><span class="step-num">1</span>Abre o SQL Editor do Supabase</h3>
+  <p>Vai a <a href="https://supabase.com/dashboard/project/esymjdrvcpwsoevnqljq/sql/new" target="_blank">Supabase SQL Editor</a> e cola o SQL abaixo.</p>
+</div>
+
+<div class="step">
+  <h3><span class="step-num">2</span>Corre o SQL</h3>
+<pre>-- Comentários/perguntas em linhas do extrato
+create table if not exists movimento_comentarios (
+  id           uuid primary key default gen_random_uuid(),
+  movimento_id text        not null,
+  conta_id     text,
+  texto        text        not null,
+  autor_id     uuid,
+  autor_nome   text,
+  resolvido    boolean     not null default false,
+  created_at   timestamptz not null default now()
+);
+
+create index if not exists idx_movcom_conta on movimento_comentarios(conta_id);
+create index if not exists idx_movcom_mov   on movimento_comentarios(movimento_id);
+
+alter table movimento_comentarios enable row level security;
+
+-- Toda a equipa autenticada lê, escreve e resolve comentários.
+drop policy if exists "ler comentarios"      on movimento_comentarios;
+drop policy if exists "criar comentarios"    on movimento_comentarios;
+drop policy if exists "editar comentarios"   on movimento_comentarios;
+drop policy if exists "apagar comentarios"   on movimento_comentarios;
+
+create policy "ler comentarios"    on movimento_comentarios for select using (true);
+create policy "criar comentarios"  on movimento_comentarios for insert with check (true);
+create policy "editar comentarios" on movimento_comentarios for update using (true) with check (true);
+create policy "apagar comentarios" on movimento_comentarios for delete using (true);
+
+-- Atualizações em tempo real (para o comentário aparecer sem recarregar)
+do $$ begin
+  if not exists (select 1 from pg_publication_tables
+                 where pubname = 'supabase_realtime' and tablename = 'movimento_comentarios') then
+    alter publication supabase_realtime add table movimento_comentarios;
+  end if;
+end $$;
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- Divisão de um movimento por várias categorias (rateio)
+create table if not exists movimento_rateios (
+  id            uuid primary key default gen_random_uuid(),
+  movimento_id  text        not null,
+  conta_id      text,
+  descricao     text,
+  valor         numeric     not null,
+  categoria     text,
+  subcategoria  text,
+  detalhes      text,
+  created_at    timestamptz not null default now()
+);
+
+create index if not exists idx_rateio_conta on movimento_rateios(conta_id);
+create index if not exists idx_rateio_mov   on movimento_rateios(movimento_id);
+
+alter table movimento_rateios enable row level security;
+
+drop policy if exists "ler rateios"    on movimento_rateios;
+drop policy if exists "criar rateios"  on movimento_rateios;
+drop policy if exists "editar rateios" on movimento_rateios;
+drop policy if exists "apagar rateios" on movimento_rateios;
+
+create policy "ler rateios"    on movimento_rateios for select using (true);
+create policy "criar rateios"  on movimento_rateios for insert with check (true);
+create policy "editar rateios" on movimento_rateios for update using (true) with check (true);
+create policy "apagar rateios" on movimento_rateios for delete using (true);
+
+do $$ begin
+  if not exists (select 1 from pg_publication_tables
+                 where pubname = 'supabase_realtime' and tablename = 'movimento_rateios') then
+    alter publication supabase_realtime add table movimento_rateios;
+  end if;
+end $$;
+
+notify pgrst, 'reload schema';</pre>
+</div>
+
+<div class="step">
+  <h3><span class="step-num">3</span>Confirma</h3>
+  <p>Volta aqui e carrega em <strong>Verificar</strong>. Depois abre o ERP → <strong>Extratos</strong> → uma conta: cada linha passa a ter um botão 💬 (notas) e um botão ⚖ (dividir por categorias).</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const URL_SB = "https://esymjdrvcpwsoevnqljq.supabase.co";
+const ANON = document.currentScript ? null : null;
+async function verificar(){
+  const el = document.getElementById('result');
+  el.style.display = 'block';
+  el.innerHTML = 'A verificar…';
+  try{
+    const key = prompt("Cola a chave anon do Supabase (Settings → API → anon public):");
+    if(!key){ el.innerHTML = '<span class="warn">Cancelado.</span>'; return; }
+    const sb = supabase.createClient(URL_SB, key);
+    const r1 = await sb.from('movimento_comentarios').select('id').limit(1);
+    const r2 = await sb.from('movimento_rateios').select('id').limit(1);
+    const linhas = [];
+    linhas.push(r1.error ? '<span class="err">✕ movimento_comentarios — em falta</span>' : '<span class="ok">✓ movimento_comentarios</span>');
+    linhas.push(r2.error ? '<span class="err">✕ movimento_rateios — em falta</span>' : '<span class="ok">✓ movimento_rateios</span>');
+    const faltam = r1.error || r2.error;
+    el.style.background = faltam ? '#2a1010' : '#102a10';
+    el.innerHTML = linhas.join('<br>') + (faltam ? '<br><br>Corre o SQL abaixo.' : '<br><br>Tudo pronto — já podes usar no ERP.');
+  }catch(e){
+    el.style.background = '#2a1010';
+    el.innerHTML = '<span class="err">Erro: ' + e.message + '</span>';
+  }
+}
+</script>
+</body>
+</html>

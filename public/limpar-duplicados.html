@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head><title>Limpar movimentos duplicados — Rio Capital ERP</title>
+<meta charset="utf-8"/>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:1100px;margin:0 auto;line-height:1.6}
+  h1{color:#C8A96E}
+  button{background:#C8A96E;border:none;padding:11px 22px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px 5px 5px 0;color:#0f0f1a}
+  button.perigo{background:#dc2626;color:#fff}
+  button:disabled{background:#333;color:#666;cursor:default}
+  .caixa{background:#1a1a2e;padding:18px;border-radius:8px;margin:14px 0}
+  .ok{color:#16a34a}.err{color:#dc2626}.warn{color:#f59e0b}.dim{color:#888}
+  table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}
+  th{text-align:left;color:#888;border-bottom:1px solid #333;padding:6px 8px;font-weight:normal}
+  td{padding:6px 8px;border-bottom:1px solid #222}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<h1>🧹 Limpar movimentos duplicados</h1>
+
+<p>Entre 1 e 8 de outubro a deteção de duplicados da importação esteve avariada: uma consulta pedia uma coluna que não existe, falhava, e o ERP ficava sem nada para comparar — por isso extratos repetidos entraram como se fossem novos.</p>
+
+<p>Esta página procura movimentos <strong>exatamente iguais</strong> na mesma conta (mesma data, mesma descrição, mesmo valor e mesmo saldo) e deixa apagar os repetidos, mantendo sempre <strong>o mais antigo de cada grupo</strong>.</p>
+
+<div class="caixa">
+  <button onclick="procurar()">🔍 Procurar duplicados</button>
+  <button id="btnApagar" class="perigo" onclick="apagar()" disabled>🗑️ Apagar os repetidos</button>
+  <div id="estado" class="dim" style="margin-top:10px">Ainda não procurei nada.</div>
+</div>
+
+<div id="resultado"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const sb = supabase.createClient(
+  'https://esymjdrvcpwsoevnqljq.supabase.co',
+  'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW'
+);
+
+let paraApagar = [];
+
+const eur = (v) => (Number(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' €';
+
+// Mesma chave que o ERP usa para dizer que dois movimentos são o mesmo
+function chave(m){
+  const data = String(m.data||'').slice(0,10);
+  const desc = String(m.movimento||'').trim().replace(/\s+/g,' ');
+  const n = (v) => { const x = Number(v); return Number.isFinite(x) ? x.toFixed(2) : '0.00'; };
+  return `${m.conta_id}|${data}|${desc}|${n(m.valor)}|${n(m.saldo)}`;
+}
+
+async function lerTudo(){
+  let todos = [], from = 0;
+  while(true){
+    const { data, error } = await sb.from('movimentos')
+      .select('id, conta_id, data, movimento, valor, saldo, created_at')
+      .order('id', { ascending: true })      // ordem total: paginação estável
+      .range(from, from + 999);
+    if(error) throw error;
+    if(!data.length) break;
+    todos = todos.concat(data);
+    if(data.length < 1000) break;
+    from += 1000;
+    document.getElementById('estado').textContent = `A ler… ${todos.length} movimentos`;
+  }
+  return todos;
+}
+
+async function procurar(){
+  const est = document.getElementById('estado');
+  const res = document.getElementById('resultado');
+  const btn = document.getElementById('btnApagar');
+  btn.disabled = true; paraApagar = [];
+  est.textContent = 'A ler os movimentos…';
+  res.innerHTML = '';
+  try{
+    const todos = await lerTudo();
+    const grupos = new Map();
+    todos.forEach(m => {
+      const k = chave(m);
+      if(!grupos.has(k)) grupos.set(k, []);
+      grupos.get(k).push(m);
+    });
+    const repetidos = [...grupos.entries()].filter(([,v]) => v.length > 1);
+    if(!repetidos.length){
+      est.innerHTML = `<span class="ok">✓ Nenhum duplicado. Li ${todos.length} movimentos.</span>`;
+      return;
+    }
+    let linhas = '', nApagar = 0, valorApagar = 0;
+    repetidos.sort((a,b)=> String(a[1][0].data).localeCompare(String(b[1][0].data)));
+    repetidos.forEach(([,grupo]) => {
+      // Mantém o mais antigo (menor created_at; sem isso, o primeiro id)
+      grupo.sort((a,b)=> String(a.created_at||'').localeCompare(String(b.created_at||'')) || String(a.id).localeCompare(String(b.id)));
+      const manter = grupo[0], apagar = grupo.slice(1);
+      apagar.forEach(m => { paraApagar.push(m.id); valorApagar += Number(m.valor)||0; });
+      nApagar += apagar.length;
+      linhas += `<tr>
+        <td class="dim">${manter.conta_id}</td>
+        <td>${String(manter.data).slice(0,10)}</td>
+        <td>${manter.movimento||''}</td>
+        <td class="num">${eur(manter.valor)}</td>
+        <td class="num">${eur(manter.saldo)}</td>
+        <td class="num warn">${grupo.length}×</td>
+        <td class="num err">apagar ${apagar.length}</td>
+      </tr>`;
+    });
+    est.innerHTML = `<span class="warn">Encontrei ${repetidos.length} movimentos repetidos — ${nApagar} linhas a apagar, ${eur(valorApagar)} em excesso.</span>`;
+    res.innerHTML = `<table>
+      <thead><tr><th>Conta</th><th>Data</th><th>Descrição</th><th>Valor</th><th>Saldo</th><th>Cópias</th><th>Ação</th></tr></thead>
+      <tbody>${linhas}</tbody></table>`;
+    document.getElementById('btnApagar').disabled = false;
+  }catch(e){
+    est.innerHTML = `<span class="err">Erro: ${e.message||e}</span>`;
+  }
+}
+
+async function apagar(){
+  if(!paraApagar.length) return;
+  if(!confirm(`Apagar ${paraApagar.length} movimentos repetidos?\n\nDe cada grupo fica sempre o mais antigo. Esta ação não se desfaz.`)) return;
+  const est = document.getElementById('estado');
+  let apagados = 0;
+  try{
+    for(let i=0;i<paraApagar.length;i+=100){
+      const lote = paraApagar.slice(i,i+100);
+      const { data, error } = await sb.from('movimentos').delete().in('id', lote).select('id');
+      if(error) throw error;
+      // O Supabase devolve sucesso com zero linhas quando falta a política
+      // DELETE — sem esta verificação dizia-se que apagou e não apagou nada.
+      if(!data || data.length === 0) throw new Error("Nada foi apagado — falta a política DELETE na tabela 'movimentos' (Supabase → Authentication → Policies).");
+      apagados += data.length;
+      est.textContent = `A apagar… ${apagados}/${paraApagar.length}`;
+    }
+    est.innerHTML = `<span class="ok">✓ Apagados ${apagados} movimentos repetidos. Volta a procurar para confirmar, e depois confere os saldos no ERP.</span>`;
+    document.getElementById('btnApagar').disabled = true;
+    paraApagar = [];
+  }catch(e){
+    est.innerHTML = `<span class="err">Erro ao apagar (${apagados} já apagados): ${e.message||e}</span>`;
+  }
+}
+</script>
+</body>
+</html>

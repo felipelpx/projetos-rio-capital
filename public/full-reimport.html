@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html>
+<head><title>Reimport completo — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:1200px;margin:0 auto}
+  h1{color:#C8A96E}
+  h2{color:#C8A96E;border-bottom:1px solid #333;padding-bottom:6px;margin-top:28px}
+  button{background:#C8A96E;border:none;padding:11px 22px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px}
+  button:disabled{opacity:0.4;cursor:default}
+  button.danger{background:#dc2626;color:#fff}
+  button.warn-btn{background:#f59e0b;color:#0f0f1a}
+  button.secondary{background:#444;color:#fff}
+  select,input{background:#1a1a2e;color:#fff;border:1px solid #444;padding:8px;border-radius:6px;font-family:monospace;font-size:13px;margin:5px}
+  .desc{background:#1a1a2e;padding:14px;border-radius:8px;border-left:4px solid #C8A96E;margin:12px 0;font-size:12px;line-height:1.6}
+  #drop{border:2px dashed #555;border-radius:12px;padding:50px;text-align:center;color:#888;font-size:14px;cursor:pointer;margin:12px 0;transition:all .15s}
+  #drop.dragover{border-color:#C8A96E;background:#1a1a2e;color:#C8A96E}
+  #log{background:#1a1a2e;padding:18px;border-radius:8px;max-height:680px;overflow-y:auto;margin-top:18px;font-size:11px;line-height:1.55}
+  table{width:100%;border-collapse:collapse;font-size:11px;margin:6px 0}
+  th,td{padding:5px 8px;border-bottom:1px solid #2a2a3e;text-align:left}
+  th{color:#C8A96E;background:#1a1a2e;position:sticky;top:0}
+  .ok{color:#16a34a}.err{color:#dc2626}.info{color:#C8A96E}.warn{color:#f59e0b}.muted{color:#888}
+  .num{text-align:right;font-family:monospace}
+  .step{background:#1a1a2e;border-radius:10px;padding:14px 18px;margin:10px 0;border-left:4px solid #444}
+  .step.done{border-left-color:#16a34a}
+  .step.active{border-left-color:#C8A96E}
+  .step-num{display:inline-block;background:#444;color:#fff;border-radius:50%;width:24px;height:24px;text-align:center;line-height:24px;font-weight:bold;margin-right:8px;font-size:12px}
+  .step.done .step-num{background:#16a34a}
+  .step.active .step-num{background:#C8A96E;color:#0f0f1a}
+</style>
+</head>
+<body>
+<h1>🔄 Reimport completo do Caixa Único</h1>
+
+<div class="desc">
+  <strong>O que isto faz:</strong> apaga <strong>TUDO</strong> em <code>movimentos</code> e reinserir a partir do Excel "Caixa Único", aba a aba. Faz backup automático antes.<br><br>
+  <strong>Vais perder:</strong> linhas manuais adicionadas na app, categorias editadas, detalhes editados — tudo o que não esteja no Excel.<br>
+  <strong>Não toca em:</strong> faturas, pagamentos_extras, vendas, fracoes, entidades, orcamento.<br><br>
+  <strong>Fluxo:</strong> 1) Backup → 2) Carregar Excel → 3) Dry-run → 4) Confirmar e aplicar.
+</div>
+
+<!-- Passo 1: BACKUP -->
+<div class="step active" id="step1">
+  <div><span class="step-num">1</span><strong>Backup</strong> — descarrega todos os movimentos atuais como JSON antes de apagar nada.</div>
+  <div style="margin-top:10px">
+    <button onclick="fazerBackup()">💾 Fazer backup agora</button>
+    <span id="backupStatus" class="muted"></span>
+  </div>
+</div>
+
+<!-- Passo 2: CARREGAR EXCEL -->
+<div class="step" id="step2">
+  <div><span class="step-num">2</span><strong>Carregar Excel</strong> — arrasta o ficheiro do Caixa Único.</div>
+  <div id="drop">📥 Arrasta aqui o Excel (.xlsx, .xlsm)<br><span style="font-size:11px;color:#666">ou clica</span></div>
+  <input id="fileInput" type="file" accept=".xlsx,.xlsm,.xls" style="display:none">
+</div>
+
+<!-- Passo 3 e 4: DRY-RUN e APLICAR -->
+<div class="step" id="step3">
+  <div><span class="step-num">3</span><strong>Dry-run</strong> — preview do que será apagado e reinserido.</div>
+  <div style="margin-top:10px">
+    <button onclick="run(true)" id="dryBtn" disabled>🔍 Dry-run</button>
+    <button onclick="run(false)" class="danger" id="applyBtn" disabled>⚠️ Apagar tudo + Reinserir</button>
+  </div>
+</div>
+
+<div id="log"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Mapeamento aba Excel → conta_id no Supabase
+const SHEET_TO_CONTA = {
+  "Rio Cartão 7449": { conta_id: "riocap_cartão_7449", empresa_id: "riocap", banco: "Cartão 7449" },
+  "Rio Caixa livre": { conta_id: "riocap_caixa_livre", empresa_id: "riocap", banco: "Caixa Livre" },
+  "Rio Capital BCP": { conta_id: "riocap_bcp", empresa_id: "riocap", banco: "BCP" },
+  "Decadexperience - BCP": { conta_id: "decadex_bcp", empresa_id: "decadex", banco: "BCP" },
+  "Visionary Story Banco Invest": { conta_id: "visionary_banco_invest", empresa_id: "visionary", banco: "Banco Invest" },
+  "BM HOLDING Banco Invest": { conta_id: "barramansa_banco_invest", empresa_id: "barramansa", banco: "Banco Invest" },
+  "BM HOLDING Miami": { conta_id: "barramansa_miami_eua", empresa_id: "barramansa", banco: "Miami" },
+  "BM Revolut": { conta_id: "barramansa_revolut", empresa_id: "barramansa", banco: "Revolut" },
+  "BM HOLDING BBAmericas": { conta_id: "barramansa_bb_americas", empresa_id: "barramansa", banco: "BB Americas" },
+  "Curious Euphory BCP": { conta_id: "curious_bcp", empresa_id: "curious", banco: "BCP" },
+  "Modernity BCP": { conta_id: "modernity_bcp", empresa_id: "modernity", banco: "BCP" },
+  "Without Delays BCP": { conta_id: "wodelay_bcp", empresa_id: "wodelay", banco: "BCP" },
+  "Nimitz BAE": { conta_id: "nimitz_banco_atlântico", empresa_id: "nimitz", banco: "BAE" },
+  "Alternative Shadow BCP": { conta_id: "shadow_bcp", empresa_id: "shadow", banco: "BCP" },
+  "CLASSIC REVELATION BNI": { conta_id: "classic_bni", empresa_id: "classic", banco: "BNI" },
+  "Enigma Imperdivel BCP": { conta_id: "enigma_bcp", empresa_id: "enigma", banco: "BCP" },
+  "Nimitz Revolut": { conta_id: "nimitz_revolut", empresa_id: "nimitz", banco: "Revolut" },
+  "Nimitz Miami": { conta_id: "nimitz_miami_eua", empresa_id: "nimitz", banco: "Miami" },
+  "Zuka BAE": { conta_id: "zuka_banco_atlântico", empresa_id: "zuka", banco: "BAE" },
+  "SILABAS E COLUNAS BNI": { conta_id: "silabas_bni", empresa_id: "silabas", banco: "BNI" },
+};
+
+// Normalização de categorias do Excel (coluna Tipo)
+const CAT_MAP = {
+  'administrativo': 'Administrativos', 'administrativos': 'Administrativos',
+  'encargos financeiros': 'Encargos financeiros', 'encargos banco': 'Encargos financeiros',
+  'impostos e taxas': 'Impostos e taxas',
+  'mutuo': 'Mútuo', 'mútuo': 'Mútuo', 'mútuo hsp': 'Mútuo', 'mútuo zuka': 'Mútuo',
+  'projetos': 'Projetos/Soft Costs', 'projetos/soft costs': 'Projetos/Soft Costs',
+  'outros': 'Outro',
+  'salários': 'Administrativos', 'ticket refeição': 'Administrativos', 'segurança': 'Obra',
+  'resgate': 'Resgate RC', 'resgate rc': 'Resgate RC',
+  'recebimento': 'Recebimento',
+  'aporte rc': 'Aporte RC', 'aporte investidores': 'Aporte Investidores',
+  'fee gestão': 'Fee Gestão', 'fiscalização': 'Fiscalização',
+  'csc': 'CSC', 'comissão': 'Comissão', 'legais': 'Legais', 'marketing': 'Marketing',
+  'obra': 'Obra', 'ajuste': 'Ajuste', 'transporte': 'Transportes', 'transportes': 'Transportes',
+  'reembolso': 'Reembolso', 'juros': 'Juros', 'terreno': 'Terreno',
+  'novos negócios': 'Novos Negócios', 'vendas': 'Vendas',
+};
+function normCat(t) {
+  if (!t) return '';
+  const k = String(t).toLowerCase().trim();
+  return CAT_MAP[k] || t;
+}
+
+function safeFloat(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number') return Math.round(v * 100) / 100;
+  let s = v.toString().trim().replace(/[€$£\s]/g, '');
+  if (s.includes('.') && s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  else if (s.includes(',') && !s.includes('.')) s = s.replace(',', '.');
+  const f = parseFloat(s);
+  return isNaN(f) ? null : Math.round(f * 100) / 100;
+}
+function normalizeDate(v) {
+  if (!v) return null;
+  if (v instanceof Date) {
+    const y = v.getFullYear(), m = String(v.getMonth()+1).padStart(2,'0'), d = String(v.getDate()).padStart(2,'0');
+    return `${y}-${m}-${d}`;
+  }
+  const s = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0,10);
+  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  return null;
+}
+function uuid() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+let parsedWorkbook = null;
+let authed = false;
+let backupDone = false;
+
+async function ensureAuth() {
+  if (authed) return true;
+  const pwd = prompt('Palavra-passe do felipe@riocapital.pt:');
+  if (!pwd) return false;
+  const { error } = await client.auth.signInWithPassword({ email: 'felipe@riocapital.pt', password: pwd });
+  if (error) { alert('Login falhou: ' + error.message); return false; }
+  authed = true;
+  return true;
+}
+
+// PASSO 1: BACKUP
+async function fazerBackup() {
+  if (!await ensureAuth()) return;
+  const status = document.getElementById('backupStatus');
+  status.textContent = " · A descarregar todos os movimentos...";
+  status.className = "info";
+
+  let all = [], from = 0;
+  while (true) {
+    const { data, error } = await client.from('movimentos').select('*').range(from, from + 999);
+    if (error) {
+      status.textContent = ` · ❌ Erro: ${error.message}`;
+      status.className = "err";
+      return;
+    }
+    if (!data?.length) break;
+    all = all.concat(data);
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+
+  const blob = new Blob([JSON.stringify({
+    timestamp: new Date().toISOString(),
+    count: all.length,
+    movimentos: all
+  }, null, 2)], { type: "application/json" });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `backup-movimentos-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.json`;
+  a.click();
+
+  backupDone = true;
+  status.textContent = ` · ✅ Backup descarregado (${all.length} movimentos). Já podes prosseguir.`;
+  status.className = "ok";
+  document.getElementById('step1').classList.remove('active');
+  document.getElementById('step1').classList.add('done');
+  document.getElementById('step2').classList.add('active');
+}
+
+// PASSO 2: PARSE EXCEL
+function setupDrop() {
+  const drop = document.getElementById('drop');
+  const fileInput = document.getElementById('fileInput');
+  drop.onclick = () => fileInput.click();
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('dragover'); };
+  drop.ondragleave = () => drop.classList.remove('dragover');
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('dragover'); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); };
+  fileInput.onchange = (e) => { if (e.target.files[0]) handleFile(e.target.files[0]); };
+}
+setupDrop();
+
+async function handleFile(f) {
+  if (!backupDone) {
+    if (!confirm("Ainda não fizeste backup. Tens a certeza que queres prosseguir sem backup?\n\nRecomendo carregar em 'Fazer backup agora' primeiro.")) return;
+  }
+  const log = document.getElementById('log');
+  log.innerHTML = `<div class="info">A ler ${f.name}...</div>`;
+  const buf = await f.arrayBuffer();
+  parsedWorkbook = XLSX.read(buf, { type: 'array', cellDates: true });
+  log.innerHTML += `<div class="ok">✅ ${parsedWorkbook.SheetNames.length} abas carregadas</div>`;
+  document.getElementById('step2').classList.remove('active');
+  document.getElementById('step2').classList.add('done');
+  document.getElementById('step3').classList.add('active');
+  document.getElementById('dryBtn').disabled = false;
+  document.getElementById('applyBtn').disabled = false;
+}
+
+function parseSheet(sheetName) {
+  const ws = parsedWorkbook.Sheets[sheetName];
+  if (!ws) return [];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+  let headerIdx = -1;
+  for (let i = 0; i < Math.min(8, rows.length); i++) {
+    const cells = (rows[i] || []).map(c => (c == null ? '' : String(c)).toLowerCase().trim());
+    if (cells.some(c => c.includes('data')) && cells.some(c => c.includes('descritivo') || c.includes('descri'))) {
+      headerIdx = i; break;
+    }
+  }
+  if (headerIdx < 0) return [];
+  const headers = rows[headerIdx].map(c => (c == null ? '' : String(c)).toLowerCase().trim());
+  const cD = headers.findIndex(h => h === 'data');
+  const cDesc = headers.findIndex(h => h.startsWith('descri'));
+  const cDeb = headers.findIndex(h => h.startsWith('débit') || h.startsWith('debit'));
+  const cCred = headers.findIndex(h => h.startsWith('crédit') || h.startsWith('credit'));
+  const cSaldo = headers.findIndex(h => h.includes('saldo'));
+  const cTipo = headers.findIndex(h => h.includes('tipo'));
+  const cObs = headers.findIndex(h => h.includes('observ'));
+  if (cD < 0 || cDesc < 0) return [];
+
+  const out = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const r = rows[i] || [];
+    const data = normalizeDate(r[cD]);
+    const desc = r[cDesc];
+    if (!data || !desc) continue;
+    const deb = cDeb >= 0 ? safeFloat(r[cDeb]) : null;
+    const cred = cCred >= 0 ? safeFloat(r[cCred]) : null;
+    let valor = 0;
+    if (cred != null && deb == null) valor = cred;
+    else if (deb != null && cred == null) valor = deb;
+    else if (cred != null && deb != null) valor = (deb || 0) + (cred || 0);
+    const saldo = cSaldo >= 0 ? safeFloat(r[cSaldo]) : null;
+    const tipo = cTipo >= 0 ? r[cTipo] : null;
+    const obs = cObs >= 0 ? r[cObs] : null;
+    out.push({
+      data, movimento: String(desc).trim(), valor, saldo: saldo == null ? 0 : saldo,
+      categoria: normCat(tipo), detalhes: obs ? String(obs).trim() : '',
+    });
+  }
+  return out;
+}
+
+// PASSO 3 e 4
+async function run(dryRun) {
+  if (!parsedWorkbook) { alert('Carrega o Excel primeiro'); return; }
+  if (!await ensureAuth()) return;
+
+  if (!dryRun) {
+    if (!backupDone) {
+      if (!confirm("⚠️ Ainda não fizeste backup!\nContinuar mesmo assim? (não recomendado)")) return;
+    }
+    if (!confirm("⚠️ CONFIRMAÇÃO FINAL\n\nVou apagar TODOS os movimentos da BD e reinserir do Excel.\n\nVais perder:\n- Linhas manuais adicionadas na app\n- Categorias editadas via dropdown\n- Detalhes editados\n\nTens a certeza?")) return;
+  }
+
+  const log = document.getElementById('log');
+  log.innerHTML = `<div class="info">A processar ${dryRun ? '(dry-run)' : '(REAL)'}...</div>`;
+  let html = '';
+  let grandDelete = 0, grandInsert = 0, grandUpdates = 0, grandErrors = 0;
+
+  for (const sheetName of parsedWorkbook.SheetNames) {
+    const mapping = SHEET_TO_CONTA[sheetName];
+    if (!mapping) {
+      html += `<div class="muted">⊘ ${sheetName} (sem mapeamento)</div>`;
+      continue;
+    }
+    const { conta_id, empresa_id, banco } = mapping;
+
+    // Linhas do Excel
+    const linhas = parseSheet(sheetName);
+    if (linhas.length === 0) {
+      html += `<div class="muted">⊘ ${sheetName}: 0 linhas no Excel</div>`;
+      continue;
+    }
+
+    // Contar existentes
+    const { data: existing, error: countErr } = await client.from('movimentos')
+      .select('id').eq('conta_id', conta_id);
+    if (countErr) {
+      html += `<div class="err">❌ ${conta_id}: ${countErr.message}</div>`;
+      continue;
+    }
+    const nExist = existing?.length || 0;
+
+    html += `<div class="info">📋 <strong>${sheetName}</strong> → ${conta_id}</div>`;
+    html += `<div class="muted">  Apagar: ${nExist} · Inserir: ${linhas.length}</div>`;
+
+    if (dryRun) {
+      // Preview primeiras 3 linhas
+      html += '<table style="margin:6px 0 12px 24px"><thead><tr><th>data</th><th>descrição</th><th class="num">valor</th><th class="num">saldo</th><th>categoria</th></tr></thead><tbody>';
+      linhas.slice(0, 3).forEach(l => {
+        html += `<tr><td>${l.data}</td><td>${(l.movimento||'').substring(0,40)}</td><td class="num">${l.valor.toLocaleString('pt-PT',{minimumFractionDigits:2})}</td><td class="num">${l.saldo.toLocaleString('pt-PT',{minimumFractionDigits:2})}</td><td>${l.categoria||'—'}</td></tr>`;
+      });
+      if (linhas.length > 3) html += `<tr><td colspan="5" class="muted">...mais ${linhas.length - 3} linhas</td></tr>`;
+      html += '</tbody></table>';
+      log.innerHTML = html;
+      grandDelete += nExist;
+      grandInsert += linhas.length;
+      continue;
+    }
+
+    // APLICAR: apagar existentes em batches
+    let delOk = 0, delErr = 0;
+    if (nExist > 0) {
+      for (let i = 0; i < existing.length; i += 50) {
+        const chunk = existing.slice(i, i + 50);
+        const results = await Promise.all(chunk.map(m =>
+          client.from('movimentos').delete().eq('id', m.id)
+        ));
+        results.forEach(r => { if (r.error) { delErr++; console.error(r.error); } else delOk++; });
+      }
+    }
+    grandDelete += delOk;
+
+    // Inserir Excel
+    const records = linhas.map((l, idx) => ({
+      id: uuid(),
+      conta_id, empresa_id, banco,
+      data: l.data, movimento: l.movimento, valor: l.valor, saldo: l.saldo,
+      categoria: l.categoria, detalhes: l.detalhes,
+      seq: idx + 1, // ordem cronológica crescente
+    }));
+    let insOk = 0, insErr = 0;
+    for (let i = 0; i < records.length; i += 100) {
+      const chunk = records.slice(i, i + 100);
+      const { data, error } = await client.from('movimentos').insert(chunk).select();
+      if (error) {
+        insErr += chunk.length;
+        console.error(error);
+        html += `<div class="err">  insert erro: ${error.message}</div>`;
+      } else {
+        insOk += data?.length || 0;
+      }
+    }
+    grandInsert += insOk;
+    grandErrors += delErr + insErr;
+
+    // Atualizar saldo na tabela contas (último saldo do Excel)
+    const ultimoSaldo = linhas[linhas.length - 1]?.saldo ?? 0;
+    const { error: upErr } = await client.from('contas')
+      .update({ saldo: ultimoSaldo, updated_at: new Date().toISOString() })
+      .eq('id', conta_id);
+    if (upErr) console.warn('Erro a atualizar contas.saldo', upErr);
+    else grandUpdates++;
+
+    html += `<div class="ok">  ✅ Apagados: ${delOk}/${nExist} · Inseridos: ${insOk}/${records.length} · contas.saldo=${ultimoSaldo.toLocaleString('pt-PT',{minimumFractionDigits:2})}</div>`;
+    log.innerHTML = html;
+  }
+
+  html += `<br><div class="info">═══════════════════════════════════════</div>`;
+  html += `<div class="info"><strong>${dryRun ? 'DRY-RUN' : 'CONCLUÍDO'}</strong></div>`;
+  html += `<div>  ${dryRun ? 'Iria apagar' : 'Apagados'}: <span class="warn">${grandDelete}</span></div>`;
+  html += `<div>  ${dryRun ? 'Iria inserir' : 'Inseridos'}: <span class="ok">${grandInsert}</span></div>`;
+  if (!dryRun) {
+    html += `<div>  contas.saldo atualizado: <span class="ok">${grandUpdates}</span> contas</div>`;
+    if (grandErrors > 0) html += `<div>  <span class="err">Erros: ${grandErrors}</span></div>`;
+    html += '<br><div class="ok">Atualiza a app para ver os movimentos.</div>';
+  }
+  log.innerHTML = html;
+}
+</script>
+</body>
+</html>

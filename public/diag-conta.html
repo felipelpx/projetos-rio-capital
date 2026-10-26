@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head><title>Diag Conta — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:1300px;margin:0 auto}
+  h1{color:#C8A96E}
+  button{background:#C8A96E;border:none;padding:11px 22px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px}
+  select,input{background:#1a1a2e;color:#fff;border:1px solid #444;padding:8px;border-radius:6px;font-family:monospace;font-size:13px;margin:5px}
+  .desc{background:#1a1a2e;padding:14px;border-radius:8px;border-left:4px solid #C8A96E;margin:12px 0;font-size:12px;line-height:1.6}
+  #log{background:#1a1a2e;padding:18px;border-radius:8px;max-height:680px;overflow-y:auto;margin-top:18px;font-size:11px;line-height:1.55}
+  table{width:100%;border-collapse:collapse;font-size:11px}
+  th,td{padding:5px 8px;border-bottom:1px solid #2a2a3e;text-align:left}
+  th{color:#C8A96E;background:#1a1a2e;position:sticky;top:0}
+  .ok{color:#16a34a}.err{color:#dc2626}.info{color:#C8A96E}.warn{color:#f59e0b}.muted{color:#888}
+  .num{text-align:right;font-family:monospace}
+</style>
+</head>
+<body>
+<h1>🔍 Diagnóstico de uma conta</h1>
+
+<div class="desc">
+  Lê <strong>tudo</strong> o que existe na BD para uma conta específica e mostra como está estruturado — seq, datas, id. Ajuda a perceber se uma linha que devia estar no topo está noutro lado.
+</div>
+
+<select id="conta">
+  <option value="barramansa_revolut">Barra Mansa · Revolut</option>
+  <option value="barramansa_banco_invest">Barra Mansa · Banco Invest</option>
+  <option value="barramansa_miami_eua">Barra Mansa · Miami/EUA</option>
+  <option value="barramansa_bb_americas">Barra Mansa · BB Americas</option>
+  <option value="riocap_bcp">Rio Capital · BCP</option>
+  <option value="riocap_caixa_livre">Rio Capital · Caixa Livre</option>
+  <option value="riocap_cartão_7449">Rio Capital · Cartão 7449</option>
+  <option value="decadex_bcp">Decadex · BCP</option>
+  <option value="modernity_bcp">Modernity · BCP</option>
+  <option value="wodelay_bcp">Without Delays · BCP</option>
+  <option value="visionary_banco_invest">Visionary · Banco Invest</option>
+  <option value="curious_bcp">Curious · BCP</option>
+  <option value="shadow_bcp">Alternative Shadow · BCP</option>
+  <option value="classic_bni">Classic Revelation · BNI</option>
+  <option value="nimitz_banco_atlântico">Nimitz · Banco Atlântico</option>
+  <option value="nimitz_revolut">Nimitz · Revolut</option>
+  <option value="nimitz_miami_eua">Nimitz · Miami/EUA</option>
+  <option value="zuka_banco_atlântico">ZUKA · Banco Atlântico</option>
+  <option value="enigma_bcp">Enigma · BCP</option>
+  <option value="silabas_bni">Sílabas · BNI</option>
+</select>
+<button onclick="diag()">▶ Diagnosticar</button>
+
+<div id="log"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const fmt = (v) => new Intl.NumberFormat('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v || 0);
+let authed = false;
+async function ensureAuth() {
+  if (authed) return true;
+  const pwd = prompt('Palavra-passe do felipe@riocapital.pt:');
+  if (!pwd) return false;
+  const { error } = await client.auth.signInWithPassword({ email: 'felipe@riocapital.pt', password: pwd });
+  if (error) { alert('Login falhou: ' + error.message); return false; }
+  authed = true;
+  return true;
+}
+
+async function diag() {
+  if (!await ensureAuth()) return;
+  const log = document.getElementById('log');
+  const cid = document.getElementById('conta').value;
+  log.innerHTML = `<div class="info">A carregar ${cid}...</div>`;
+
+  // Tudo da conta
+  let all = [], from = 0;
+  while (true) {
+    const { data, error } = await client.from('movimentos').select('*')
+      .eq('conta_id', cid).range(from, from + 999);
+    if (error) { log.innerHTML += `<div class="err">${error.message}</div>`; return; }
+    if (!data?.length) break;
+    all = all.concat(data);
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+
+  let html = `<div class="info"><strong>📋 ${cid}</strong> · total <strong>${all.length}</strong> movimentos</div>`;
+
+  // Estatísticas seq
+  const semSeq = all.filter(m => m.seq == null);
+  const comSeq = all.filter(m => m.seq != null);
+  const seqs = comSeq.map(m => m.seq);
+  const minSeq = seqs.length ? Math.min(...seqs) : 0;
+  const maxSeq = seqs.length ? Math.max(...seqs) : 0;
+  html += `<div>seq=NULL: <span class="${semSeq.length>0?'warn':'muted'}">${semSeq.length}</span> · com seq: ${comSeq.length} (min=${minSeq} max=${maxSeq})</div>`;
+
+  // Estatísticas data
+  const datas = all.map(m => m.data).filter(Boolean).sort();
+  if (datas.length) {
+    html += `<div>data: <strong>${datas[0]}</strong> → <strong>${datas[datas.length-1]}</strong></div>`;
+  }
+
+  // Estatísticas created_at se existir
+  const temCreatedAt = all.some(m => m.created_at);
+  if (temCreatedAt) {
+    const cas = all.map(m => m.created_at).filter(Boolean).sort();
+    html += `<div>created_at: <strong>${cas[0]?.substring(0,19)}</strong> → <strong>${cas[cas.length-1]?.substring(0,19)}</strong></div>`;
+  }
+
+  // TOP 20 mais recentes por seq DESC (igual ao que a app vê)
+  html += '<h3 style="color:#C8A96E;margin-top:16px">Top 20 por seq DESC NULLS LAST (= ordem na app):</h3>';
+  const sortedBySeq = [...all].sort((a, b) => {
+    if (a.seq == null && b.seq == null) return (b.data || '').localeCompare(a.data || '');
+    if (a.seq == null) return 1;
+    if (b.seq == null) return -1;
+    return b.seq - a.seq;
+  });
+  html += '<table><thead><tr><th>seq</th><th>data</th><th>descrição</th><th class="num">valor</th><th class="num">saldo</th><th class="muted">id</th></tr></thead><tbody>';
+  sortedBySeq.slice(0, 20).forEach(m => {
+    html += `<tr><td class="${m.seq==null?'warn':''}">${m.seq ?? '∅'}</td><td>${m.data||''}</td><td>${(m.movimento||'').substring(0,45)}</td><td class="num ${m.valor>=0?'ok':'err'}">${fmt(m.valor)}</td><td class="num">${fmt(m.saldo)}</td><td class="muted" style="font-size:9px">${m.id}</td></tr>`;
+  });
+  html += '</tbody></table>';
+
+  // TOP 20 mais recentes por created_at (= os últimos inseridos, sejam de Excel ou manuais)
+  const comCreatedAt = all.filter(m => m.created_at);
+  if (comCreatedAt.length > 0) {
+    comCreatedAt.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    html += `<h3 style="color:#C8A96E;margin-top:16px">Top 20 mais recentes por created_at (= últimos inseridos na BD):</h3>`;
+    html += '<table><thead><tr><th>created_at</th><th>seq</th><th>data</th><th>descrição</th><th class="num">valor</th><th class="num">saldo</th></tr></thead><tbody>';
+    comCreatedAt.slice(0, 20).forEach(m => {
+      html += `<tr><td class="muted">${m.created_at?.substring(0,19)}</td><td class="${m.seq==null?'warn':''}">${m.seq ?? '∅'}</td><td>${m.data||''}</td><td>${(m.movimento||'').substring(0,45)}</td><td class="num ${m.valor>=0?'ok':'err'}">${fmt(m.valor)}</td><td class="num">${fmt(m.saldo)}</td></tr>`;
+    });
+    html += '</tbody></table>';
+  }
+
+  // Procurar IDs "estranhos" — não começam com nada conhecido
+  const idPrefixes = {};
+  all.forEach(m => {
+    const id = String(m.id || '');
+    const prefix = id.split('_')[0] || '(vazio)';
+    idPrefixes[prefix] = (idPrefixes[prefix] || 0) + 1;
+  });
+  html += `<h3 style="color:#C8A96E;margin-top:16px">Prefixos dos id:</h3>`;
+  html += '<table><thead><tr><th>prefixo</th><th class="num">qtd</th></tr></thead><tbody>';
+  Object.entries(idPrefixes).sort((a,b) => b[1] - a[1]).forEach(([p, c]) => {
+    html += `<tr><td>${p}_</td><td class="num">${c}</td></tr>`;
+  });
+  html += '</tbody></table>';
+
+  log.innerHTML = html;
+}
+</script>
+</body>
+</html>

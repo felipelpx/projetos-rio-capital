@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Ativar Realtime — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:1100px;margin:0 auto;line-height:1.55}
+  h1{color:#C8A96E}
+  h2{color:#C8A96E;border-bottom:1px solid #333;padding-bottom:6px;margin-top:24px}
+  button{background:#C8A96E;border:none;padding:11px 22px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px}
+  pre{background:#1a1a2e;padding:18px;border-radius:8px;overflow-x:auto;border-left:4px solid #C8A96E;font-size:12px;white-space:pre-wrap;line-height:1.55}
+  .desc{background:#1a1a2e;padding:14px;border-radius:8px;border-left:4px solid #C8A96E;margin:12px 0;font-size:12px}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{padding:8px 12px;border-bottom:1px solid #2a2a3e;text-align:left}
+  th{color:#C8A96E;background:#1a1a2e}
+  .ok{color:#16a34a}.err{color:#dc2626}.info{color:#C8A96E}.warn{color:#f59e0b}
+  .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
+  .badge-ok{background:#1f3a1f;color:#16a34a}
+  .badge-err{background:#3a1f1f;color:#dc2626}
+  a{color:#C8A96E}
+  #log{margin-top:14px;padding:14px;border-radius:6px;background:#1a1a2e;display:none}
+</style>
+</head>
+<body>
+<h1>📡 Verificar e Ativar Realtime</h1>
+
+<div class="desc">
+  O Fluxo Futuro, Pagamentos, Extratos e Faturas só atualizam automaticamente entre utilizadores se a tabela tiver <strong>Realtime ativado</strong> no Supabase.
+  <br><br>
+  Esta página verifica se cada tabela está bem configurada e, se não estiver, dá-te o SQL para a ativar.
+</div>
+
+<h2>1. Verificar estado atual</h2>
+<button onclick="verificarTudo()">🔍 Verificar realtime em todas as tabelas</button>
+<div id="status"></div>
+
+<h2>2. SQL para ativar Realtime (correr no Supabase SQL Editor)</h2>
+<pre>-- Adicionar todas as tabelas ao publication "supabase_realtime"
+-- (idempotente: se já estiver na publication, não dá erro)
+
+-- Movimentos (extratos bancários)
+ALTER PUBLICATION supabase_realtime ADD TABLE movimentos;
+
+-- Faturas (Contas a Pagar)
+ALTER PUBLICATION supabase_realtime ADD TABLE faturas;
+
+-- Pagamentos manuais (Fluxo Futuro)
+ALTER PUBLICATION supabase_realtime ADD TABLE pagamentos_extras;
+
+-- Vendas (Comercial)
+ALTER PUBLICATION supabase_realtime ADD TABLE vendas;
+
+-- Frações
+ALTER PUBLICATION supabase_realtime ADD TABLE fracoes;
+
+-- Mapas de pagamento
+ALTER PUBLICATION supabase_realtime ADD TABLE mapas_pagamento;
+ALTER PUBLICATION supabase_realtime ADD TABLE mapas_pagamento_itens;
+
+-- Contas (saldos)
+ALTER PUBLICATION supabase_realtime ADD TABLE contas;
+
+-- Orçamento
+ALTER PUBLICATION supabase_realtime ADD TABLE orcamento;
+
+-- Entidades
+ALTER PUBLICATION supabase_realtime ADD TABLE entidades;
+
+-- Verificar
+SELECT schemaname, tablename FROM pg_publication_tables WHERE pubname = 'supabase_realtime';
+</pre>
+
+<h2>3. Resposta esperada após correr o SQL</h2>
+<p>O <code>SELECT</code> final deve mostrar pelo menos estas 10 tabelas. Se aparecerem todas, o realtime está pronto.</p>
+
+<h2>4. Como abrir o SQL Editor</h2>
+<p><a href="https://supabase.com/dashboard/project/esymjdrvcpwsoevnqljq/sql/new" target="_blank">Abrir SQL Editor →</a></p>
+
+<h2>5. Em alternativa: ligar uma a uma pelo Dashboard</h2>
+<p><a href="https://supabase.com/dashboard/project/esymjdrvcpwsoevnqljq/database/replication" target="_blank">Database → Replication →</a> marca todas as tabelas como "Source" no Realtime.</p>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const TABELAS = ['movimentos','faturas','pagamentos_extras','vendas','fracoes','mapas_pagamento','mapas_pagamento_itens','contas','orcamento','entidades'];
+
+let authed = false;
+async function ensureAuth() {
+  if (authed) return true;
+  const pwd = prompt('Palavra-passe do felipe@riocapital.pt:');
+  if (!pwd) return false;
+  const { error } = await client.auth.signInWithPassword({ email: 'felipe@riocapital.pt', password: pwd });
+  if (error) { alert('Login falhou: ' + error.message); return false; }
+  authed = true;
+  return true;
+}
+
+async function verificarTudo() {
+  if (!await ensureAuth()) return;
+  const div = document.getElementById('status');
+  div.innerHTML = '<div class="info">A testar realtime em cada tabela (timeout 4s por tabela)...</div>';
+
+  let html = '<table><thead><tr><th>tabela</th><th>SELECT funciona?</th><th>Subscription liga?</th><th>Estado</th></tr></thead><tbody>';
+
+  for (const t of TABELAS) {
+    // 1. SELECT básico
+    const { error: selErr } = await client.from(t).select('*', { count: 'exact', head: true });
+    const selOK = !selErr;
+
+    // 2. Subscription test: assina o channel e vê se chega ao status SUBSCRIBED dentro de 4s
+    const subOK = await new Promise(resolve => {
+      const ch = client.channel(`probe-${t}-${Date.now()}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: t }, () => {})
+        .subscribe(status => {
+          if (status === 'SUBSCRIBED') { client.removeChannel(ch); resolve(true); }
+          else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+            client.removeChannel(ch); resolve(false);
+          }
+        });
+      setTimeout(() => { try { client.removeChannel(ch); } catch {} resolve(false); }, 4000);
+    });
+
+    const estado = selOK && subOK ? '<span class="badge badge-ok">OK</span>' :
+                   !selOK ? '<span class="badge badge-err">SEM ACESSO</span>' :
+                   '<span class="badge badge-err">REALTIME DESLIGADO</span>';
+
+    html += `<tr><td><code>${t}</code></td><td>${selOK ? '<span class="ok">✓</span>' : '<span class="err">✗ ' + (selErr?.message || '?') + '</span>'}</td><td>${subOK ? '<span class="ok">✓</span>' : '<span class="err">✗ não recebe eventos</span>'}</td><td>${estado}</td></tr>`;
+  }
+
+  html += '</tbody></table>';
+  div.innerHTML = html;
+}
+</script>
+</body>
+</html>

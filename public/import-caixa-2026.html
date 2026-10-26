@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head><meta charset="utf-8"><title>Importar Caixa Único 2026 — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:1100px;margin:0 auto;line-height:1.5}
+  h1{color:#C8A96E}
+  button{background:#C8A96E;border:none;padding:12px 24px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px;color:#0f0f1a}
+  button:disabled{opacity:0.4;cursor:default}
+  button.big{padding:16px 32px;font-size:16px}
+  button.danger{background:#dc2626;color:#fff}
+  .desc{background:#1a1a2e;padding:14px;border-radius:8px;border-left:4px solid #C8A96E;margin:12px 0;font-size:12px}
+  .warn-box{background:#2a1a0f;padding:14px;border-radius:8px;border-left:4px solid #f59e0b;margin:12px 0;font-size:12px}
+  #log{background:#1a1a2e;padding:18px;border-radius:8px;max-height:520px;overflow-y:auto;margin-top:18px;font-size:12px}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{padding:7px 10px;border-bottom:1px solid #2a2a3e;text-align:left}
+  th{color:#C8A96E;background:#1a1a2e}
+  .ok{color:#16a34a}.err{color:#dc2626}.info{color:#C8A96E}.warn{color:#f59e0b}.muted{color:#888}
+  .num{text-align:right}
+</style>
+</head>
+<body>
+<h1>📥 Importar Caixa Único 2026</h1>
+
+<div class="desc">
+  Carrega os <strong>2.533 movimentos de 2026</strong> do ficheiro
+  <code>2026_CaixaUnico_nolinks.xlsx</code>, já com <strong>categoria e
+  subcategoria</strong> da folha de cálculo.<br><br>
+  <strong>Não apaga nada.</strong> Antes de inserir, lê o que já existe em cada
+  conta e ignora os movimentos repetidos (mesma data, descrição, valor e saldo).
+  Pode correr mais do que uma vez sem duplicar.<br><br>
+  Movimentos anteriores a 2026 ficam intactos, com as categorias antigas.
+</div>
+
+<div class="warn-box">
+  <strong>Importar</strong> acrescenta o que falta e ignora repetidos.
+  <strong>Substituir 2026</strong> apaga tudo o que existe com data de 2026 nas contas
+  abaixo e repõe a partir da folha — é o que resolve datas erradas, duplicados e
+  categorias antigas de uma vez. Faz backup em <code>/backup.html</code> antes.
+</div>
+
+<div class="warn-box">
+  <strong>⚠ Antes de começar:</strong> a coluna <code>subcategoria</code> tem de
+  existir na tabela <code>movimentos</code>. Se ainda não existir, corre isto no
+  SQL Editor do Supabase:<br><br>
+  <code style="color:#C8A96E">alter table movimentos add column if not exists subcategoria text;</code><br><br>
+  O botão «Verificar» abaixo confirma se já está feito.
+</div>
+
+<div class="desc">
+  <strong>Folha a importar.</strong> Escolhe o teu <code>.xlsx</code> do Caixa Único —
+  é lido aqui no browser, nada é enviado para fora. Se não escolheres nenhum, usa-se
+  a cópia que veio com o site.<br><br>
+  <input type="file" id="ficheiro" accept=".xlsx,.xlsm" onchange="ficheiroEscolhido()"
+    style="color:#fff">
+  <span id="infoFicheiro" class="muted"></span>
+</div>
+
+<div style="margin-top:20px">
+  <button onclick="testarApagar()" id="btnT">0 · Testar permissão de apagar</button>
+  <button onclick="verificar()" id="btnV">1 · Verificar</button>
+  <button onclick="simular()" id="btnS" disabled>2 · Simular (não grava)</button>
+  <button onclick="importar()" id="btnI" class="big" disabled>3 · Importar (só os novos)</button>
+  <button onclick="substituir()" id="btnR" class="danger" disabled>3b · Substituir 2026</button>
+  <button onclick="limpar2026()" id="btnL" class="danger">🗑 Apagar TODO o 2026</button>
+  <button onclick="limparTudo()" id="btnZ" class="danger">☠ Apagar TODOS os movimentos</button>
+  <span id="status" class="muted" style="margin-left:14px"></span>
+</div>
+
+<div id="log"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const log = (html, cls = '') => {
+  document.getElementById('log').insertAdjacentHTML('beforeend',
+    `<div class="${cls}">${html}</div>`);
+  document.getElementById('log').scrollTop = 1e9;
+};
+const setStatus = (t) => document.getElementById('status').textContent = t;
+
+let DADOS = null, temSubcat = false;
+let MAPA = {};          // conta_id do ficheiro → conta_id real na base de dados
+let CONTAS_REAIS = [];  // ids que existem mesmo (em contas ou em movimentos)
+
+// Mesma chave de deduplicação usada pelo ERP
+const movKey = (m) => {
+  const data = String(m.data || '').slice(0, 10);
+  const n = (v) => { const x = Number(v); return Number.isFinite(x) ? x.toFixed(2) : '0.00'; };
+  const desc = String(m.movimento || '').trim().replace(/\s+/g, ' ');
+  return `${data}|${desc}|${n(m.valor)}|${n(m.saldo)}`;
+};
+
+// Os conta_id foram gerados de formas diferentes ao longo do tempo
+// ("nimitz_banco_atlântico" vs "nimitz_bancoatlantico" vs "nimitz_miami/eua").
+// Comparar texto exacto falha; normalizamos antes de comparar.
+const norm = (s) => String(s || '').toLowerCase()
+  .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .replace(/[^a-z0-9]/g, '');
+
+function escolherConta(fileId, valor) { MAPA[fileId] = valor; }
+
+// O Supabase não devolve erro quando uma política RLS impede o DELETE: a
+// chamada "corre bem" e não apaga nada. Pedimos as linhas apagadas de volta
+// (.select) para saber quantas saíram mesmo.
+async function apagarIds(ids) {
+  let apagados = 0, erro = null;
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await sb.from('movimentos')
+      .delete().in('id', ids.slice(i, i + 200)).select('id');
+    if (error) { erro = error; break; }
+    apagados += (data || []).length;
+  }
+  return { apagados, erro };
+}
+
+function avisoRLS(pedidos, apagados) {
+  if (apagados >= pedidos) return false;
+  log(`<br>⚠ <strong>Pediste para apagar ${pedidos} linhas e só saíram ${apagados}.</strong>`, 'err');
+  log('O Supabase aceitou o pedido mas a base não apagou nada — falta uma política '
+    + 'de DELETE na tabela <code>movimentos</code>. Corre isto no SQL Editor:', 'warn');
+  log('<div class="desc"><code style="color:#C8A96E">'
+    + 'create policy "delete movimentos" on movimentos<br>'
+    + '&nbsp;&nbsp;for delete to authenticated using (true);'
+    + '</code></div>');
+  log('Para ver o que já existe: <code>select * from pg_policies where tablename = \'movimentos\';</code>', 'muted');
+  return true;
+}
+
+let authed = false;
+async function ensureAuth() {
+  if (authed) return true;
+  const pwd = prompt('Palavra-passe do felipe@riocapital.pt:');
+  if (!pwd) return false;
+  const { error } = await sb.auth.signInWithPassword({ email: 'felipe@riocapital.pt', password: pwd });
+  if (error) { log('✗ Autenticação falhou: ' + error.message, 'err'); return false; }
+  authed = true; return true;
+}
+
+// Mapeamento aba → conta. Se acrescentares abas à folha, acrescenta aqui.
+const ABAS = {
+  'BM_BI':'barramansa_banco_invest','BM_Revolut':'barramansa_revolut','BM_Miami':'barramansa_miami_eua',
+  'BM_BB':'barramansa_bb_americas','Alternative_BCP':'shadow_bcp','ChromaticParcel_BNI':'chromatic_bni',
+  'Classic_BNI':'classic_bni','Crunchy_BNI':'crunchy_bni','Curious_BCP':'curious_bcp','Decadex_BCP':'decadex_bcp',
+  'Modernity_BCP':'modernity_bcp','Nimitz_BancoAtlantico':'nimitz_banco_atlântico','Nimitz_Miami':'nimitz_miami_eua',
+  'Nimitz_Revolut':'nimitz_revolut','Rio_BCP':'riocap_bcp','Rio_CC':'riocap_cc','WithoutDelays_BCP':'wodelay_bcp',
+  'Enigma_MBCP':'enigma_mbcp','Enigmimperdivel_MBCP':'enigma_mbcp',
+};
+
+const ANO = '2026';
+
+function dataISO(v) {
+  if (v instanceof Date && !isNaN(v)) {
+    return `${v.getFullYear()}-${String(v.getMonth()+1).padStart(2,'0')}-${String(v.getDate()).padStart(2,'0')}`;
+  }
+  if (typeof v === 'number') {                       // número de série do Excel
+    const d = XLSX.SSF.parse_date_code(v);
+    if (!d) return null;
+    return `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`;
+  }
+  const t = String(v || '').trim();
+  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return `${m[3]}-${String(m[2]).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`;
+  return null;
+}
+
+function numero(v) {
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v === 'number') return v;
+  let t = String(v).replace(/[\s\u00A0€]/g, '');
+  if (t.includes(',') && t.includes('.')) {
+    t = t.lastIndexOf(',') > t.lastIndexOf('.') ? t.replace(/\./g,'').replace(',','.') : t.replace(/,/g,'');
+  } else if (t.includes(',')) t = t.replace(',', '.');
+  const n = parseFloat(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Lê a folha com a mesma lógica da extração: procura a linha de cabeçalho que
+// contém "Descrição" e usa os nomes das colunas, não as posições — assim
+// acrescentar ou remover colunas de data não parte nada.
+function lerWorkbook(wb) {
+  const linhas = [];
+  const semAba = [];
+  for (const [aba, conta_id] of Object.entries(ABAS)) {
+    if (!wb.SheetNames.includes(aba)) { semAba.push(aba); continue; }
+    const grelha = XLSX.utils.sheet_to_json(wb.Sheets[aba], { header: 1, raw: true, cellDates: true, defval: null });
+    const hi = grelha.findIndex(r => r && r.some(c => String(c || '').trim() === 'Descrição'));
+    if (hi < 0) { semAba.push(aba + ' (sem cabeçalho)'); continue; }
+    const hdr = grelha[hi].map(c => String(c || '').trim());
+    const col = (nome) => hdr.indexOf(nome);
+    const iData = col('Data'), iDesc = col('Descrição'), iMont = col('Montante');
+    const iSaldo = col('Saldo Contabilistico') >= 0 ? col('Saldo Contabilistico') : col('Saldo');
+    const iCat = col('Category'), iSub = col('Sub Category'), iNota = col('Note');
+    if (iData < 0 || iDesc < 0 || iMont < 0) { semAba.push(aba + ' (faltam colunas)'); continue; }
+    let ordem = 0;
+    for (let i = hi + 1; i < grelha.length; i++) {
+      const r = grelha[i];
+      if (!r || r.every(c => c === null || c === '')) continue;
+      const d = dataISO(r[iData]);
+      if (!d || !d.startsWith(ANO)) continue;
+      const valor = numero(r[iMont]);
+      if (valor === null) continue;
+      ordem++;
+      const saldo = iSaldo >= 0 ? numero(r[iSaldo]) : null;
+      linhas.push({
+        conta_id, ordem, data: d,
+        movimento: String(r[iDesc] ?? '').trim(),
+        valor: Math.round(valor * 100) / 100,
+        saldo: saldo === null ? null : Math.round(saldo * 100) / 100,
+        categoria: iCat >= 0 ? String(r[iCat] ?? '').trim() : '',
+        subcategoria: iSub >= 0 ? String(r[iSub] ?? '').trim() : '',
+        detalhes: iNota >= 0 ? String(r[iNota] ?? '').trim() : '',
+      });
+    }
+  }
+  return { linhas, semAba };
+}
+
+function ficheiroEscolhido() {
+  const f = document.getElementById('ficheiro').files[0];
+  DADOS = null; MAPA = {};
+  document.getElementById('btnS').disabled = true;
+  document.getElementById('btnI').disabled = true;
+  document.getElementById('btnR').disabled = true;
+  document.getElementById('infoFicheiro').textContent =
+    f ? `${f.name} · ${(f.size / 1048576).toFixed(1)} MB — clica em Verificar` : '';
+}
+
+async function carregarDados() {
+  if (DADOS) return DADOS;
+  const f = document.getElementById('ficheiro').files[0];
+  if (!f) {
+    const r = await fetch('/caixa_2026.json');
+    DADOS = await r.json();
+    log('· A usar a cópia incluída no site (nenhum ficheiro escolhido)', 'muted');
+    return DADOS;
+  }
+  setStatus('a ler o Excel…');
+  const buf = await f.arrayBuffer();
+  const wb = XLSX.read(buf, { cellDates: true });
+  const { linhas, semAba } = lerWorkbook(wb);
+  if (semAba.length) log('⚠ Abas não lidas: ' + semAba.join(', '), 'warn');
+  DADOS = linhas;
+  log(`✓ Lido de <strong>${f.name}</strong>`, 'ok');
+  return DADOS;
+}
+
+// Contas que existem de facto: as da tabela `contas` mais as que já têm
+// movimentos gravados (uma conta pode ter movimentos sem linha em `contas`).
+async function contasExistentes() {
+  const ids = new Map();
+  const { data: cs } = await sb.from('contas').select('id');
+  (cs || []).forEach(c => ids.set(c.id, 0));
+  let from = 0;
+  while (true) {
+    const { data, error } = await sb.from('movimentos').select('conta_id').range(from, from + 999);
+    if (error || !data || !data.length) break;
+    data.forEach(r => ids.set(r.conta_id, (ids.get(r.conta_id) || 0) + 1));
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+  return [...ids.entries()].map(([id, n]) => ({ id, n })).sort((a, b) => a.id.localeCompare(b.id));
+}
+
+// Verifica se a base deixa mesmo apagar. Apaga uma linha e volta a inseri-la.
+async function testarApagar() {
+  document.getElementById('log').innerHTML = '';
+  if (!await ensureAuth()) return;
+  setStatus('a testar…');
+  const { count } = await sb.from('movimentos').select('id', { count: 'exact', head: true });
+  log(`Tabela <code>movimentos</code>: <strong>${count}</strong> linhas.`, 'info');
+
+  const { data: amostra } = await sb.from('movimentos').select('*').limit(1);
+  if (!amostra || !amostra.length) { log('Tabela vazia — nada a testar.', 'muted'); return; }
+  const linha = amostra[0];
+
+  const { data: saiu, error } = await sb.from('movimentos').delete().eq('id', linha.id).select('id');
+  if (error) { log('✗ O DELETE devolveu erro: ' + error.message, 'err'); setStatus('erro'); return; }
+
+  if (!saiu || !saiu.length) {
+    log('✗ <strong>O DELETE correu sem erro mas não apagou nada.</strong>', 'err');
+    log('É isto que faz os botões de limpeza parecerem funcionar sem efeito. '
+      + 'Falta uma política de DELETE na tabela. No SQL Editor do Supabase:', 'warn');
+    log('<div class="desc"><code style="color:#C8A96E">'
+      + 'create policy "delete movimentos" on movimentos<br>'
+      + '&nbsp;&nbsp;for delete to authenticated using (true);'
+      + '</code></div>');
+    setStatus('sem permissão para apagar');
+    return;
+  }
+
+  // apagou — repõe a linha para não perder nada
+  const { error: e2 } = await sb.from('movimentos').insert([linha]);
+  log('✓ A base aceita apagar. ' + (e2 ? 'Atenção: não consegui repor a linha de teste — ' + e2.message
+      : 'A linha de teste foi reposta.'), e2 ? 'warn' : 'ok');
+  setStatus('permissão confirmada');
+}
+
+async function verificar() {
+  document.getElementById('log').innerHTML = '';
+  if (!await ensureAuth()) return;
+  setStatus('a verificar…');
+
+  const d = await carregarDados();
+  log(`✓ Ficheiro lido: <strong>${d.length}</strong> movimentos de 2026`, 'ok');
+
+  const { error } = await sb.from('movimentos').select('subcategoria').limit(1);
+  temSubcat = !error;
+  if (temSubcat) log('✓ A coluna <code>subcategoria</code> existe', 'ok');
+  else log('✗ Falta a coluna <code>subcategoria</code> — corre o SQL indicado acima. '
+         + 'Podes importar sem ela, mas as subcategorias perdem-se.', 'err');
+
+  CONTAS_REAIS = await contasExistentes();
+  log(`✓ Encontradas <strong>${CONTAS_REAIS.length}</strong> contas na base de dados`, 'ok');
+
+  const doFicheiro = [...new Set(d.map(x => x.conta_id))];
+  const opcoes = (sel) => '<option value="">— criar conta nova —</option>' +
+    CONTAS_REAIS.map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${c.id} (${c.n} mov.)</option>`).join('');
+
+  let html = '<table><tr><th>conta no ficheiro</th><th class="num">linhas</th><th>vai para</th></tr>';
+  let auto = 0, novas = 0;
+  for (const fid of doFicheiro) {
+    const n = d.filter(x => x.conta_id === fid).length;
+    const alvo = CONTAS_REAIS.find(c => c.id === fid)
+              || CONTAS_REAIS.find(c => norm(c.id) === norm(fid));
+    MAPA[fid] = alvo ? alvo.id : '';
+    if (alvo) auto++; else novas++;
+    const nota = alvo
+      ? (alvo.id === fid ? '<span class="ok">igual</span>' : '<span class="warn">≈ reconhecida</span>')
+      : '<span class="warn">seria nova</span>';
+    html += `<tr><td>${fid}</td><td class="num">${n}</td><td>`
+         +  `<select onchange="escolherConta('${fid}', this.value)" `
+         +  `style="background:#0f0f1a;color:#fff;border:1px solid #2a2a3e;padding:5px;border-radius:5px;min-width:340px">`
+         +  opcoes(MAPA[fid]) + `</select> ${nota}</td></tr>`;
+  }
+  html += '</table>';
+  log('<br><strong>Correspondência de contas</strong> — confirma cada linha antes de avançar:', 'info');
+  log(html);
+  log(`<br>${auto} reconhecidas · ${novas} seriam criadas de novo.`, novas ? 'warn' : 'ok');
+  if (novas) log('Se alguma das que diz "seria nova" já existir com outro nome, escolhe-a no menu — '
+               + 'assim os movimentos vão para a conta certa em vez de criarem uma duplicada.', 'warn');
+
+  // Encadeamento: saldo anterior + movimento == saldo. Detecta linhas trocadas
+  // ou saldos errados na folha ANTES de os gravar.
+  let h2 = '<table><tr><th>conta</th><th class="num">linhas</th><th>cadeia de saldos</th><th class="num">saldo final</th></tr>';
+  for (const fid of doFicheiro) {
+    const rows = d.filter(x => x.conta_id === fid).sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+    let q = 0, prim = null;
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i].saldo === null || rows[i - 1].saldo === null) continue;
+      if (Math.abs(rows[i - 1].saldo + rows[i].valor - rows[i].saldo) > 0.02) {
+        q++; if (!prim) prim = `${rows[i].data} · ${rows[i].movimento.slice(0, 30)}`;
+      }
+    }
+    const f = rows[rows.length - 1];
+    h2 += `<tr><td>${fid}</td><td class="num">${rows.length}</td>`
+       +  `<td class="${q ? 'warn' : 'ok'}">${q ? `${q} saltos (1º: ${prim})` : 'OK'}</td>`
+       +  `<td class="num">${f && f.saldo !== null ? f.saldo.toLocaleString('pt-BR', {minimumFractionDigits:2}) : '—'}</td></tr>`;
+  }
+  h2 += '</table>';
+  log('<br><strong>Saldos da folha</strong> — confere antes de gravar:', 'info');
+  log(h2);
+
+  document.getElementById('btnS').disabled = false;
+  document.getElementById('btnI').disabled = false;
+  document.getElementById('btnR').disabled = false;
+  setStatus('pronto');
+}
+
+async function analisar() {
+  const d = await carregarDados();
+  const contas = [...new Set(d.map(x => x.conta_id))];
+  const resumo = [];
+  for (const c of contas) {
+    const destino = MAPA[c] || c;      // conta escolhida no passo 1
+    const novos = d.filter(x => x.conta_id === c);
+    let jaLa = [], off2 = 0;
+    while (true) {
+      const { data } = await sb.from('movimentos').select('data,movimento,valor,saldo')
+        .eq('conta_id', destino).range(off2, off2 + 999);
+      if (!data || !data.length) break;
+      jaLa.push(...data.filter(x => String(x.data || '').slice(0, 4) === '2026'));
+      if (data.length < 1000) break;
+      off2 += 1000;
+    }
+    const chaves = new Set(jaLa.map(movKey));
+    const inserir = novos.filter(m => !chaves.has(movKey(m)));
+    resumo.push({ conta: c, destino, total: novos.length, existentes: novos.length - inserir.length, inserir });
+  }
+  return resumo;
+}
+
+async function simular() {
+  document.getElementById('log').innerHTML = '';
+  if (!await ensureAuth()) return;
+  setStatus('a simular…');
+  const resumo = await analisar();
+  let html = '<table><tr><th>conta no ficheiro</th><th>vai para</th><th class="num">no ficheiro</th>'
+           + '<th class="num">já existem</th><th class="num">a inserir</th></tr>';
+  let tot = 0;
+  for (const r of resumo) {
+    tot += r.inserir.length;
+    html += `<tr><td>${r.conta}</td><td class="${r.destino === r.conta ? 'muted' : 'warn'}">${r.destino}</td><td class="num">${r.total}</td>`
+         +  `<td class="num muted">${r.existentes}</td>`
+         +  `<td class="num ${r.inserir.length ? 'ok' : 'muted'}">${r.inserir.length}</td></tr>`;
+  }
+  html += `<tr style="background:#1a1a2e;font-weight:bold"><td>TOTAL</td><td colspan="3"></td>`
+       +  `<td class="num info">${tot}</td></tr></table>`;
+  log(html);
+  log(`<br>Simulação apenas — <strong>nada foi gravado</strong>.`, 'warn');
+  setStatus('simulação concluída');
+}
+
+// Apaga a tabela de movimentos por completo — todos os anos, todas as contas.
+// Fica só o que for importado a seguir. Não há como desfazer sem o backup.
+async function limparTudo() {
+  const { count: antes } = await sb.from('movimentos').select('id', { count: 'exact', head: true });
+  const resposta = prompt(
+    `Vais APAGAR TODOS os movimentos de TODAS as contas (${antes ?? '?'} linhas), de todos os anos.\n\n`
+    + 'Isto não tem como desfazer sem o ficheiro de /backup.html.\n\n'
+    + 'Para confirmar, escreve: APAGAR TUDO');
+  if (resposta !== 'APAGAR TUDO') { log('Cancelado.', 'muted'); return; }
+
+  document.getElementById('log').innerHTML = '';
+  if (!await ensureAuth()) return;
+  document.getElementById('btnZ').disabled = true;
+  setStatus('a apagar tudo…');
+  log(`A apagar ${antes} movimentos…`, 'warn');
+
+  let n = 0;
+  while (true) {
+    const { data, error } = await sb.from('movimentos').select('id').limit(1000);
+    if (error) { log('✗ ' + error.message, 'err'); break; }
+    if (!data || !data.length) break;
+    const ids = data.map(r => r.id);
+    const r = await apagarIds(ids);
+    if (r.erro) { log('✗ ' + r.erro.message, 'err'); document.getElementById('btnZ').disabled = false; return; }
+    if (r.apagados === 0) { avisoRLS(ids.length, 0); document.getElementById('btnZ').disabled = false; setStatus('bloqueado'); return; }
+    n += r.apagados;
+    setStatus(`${n}/${antes} apagados…`);
+  }
+
+  const { count: depois } = await sb.from('movimentos').select('id', { count: 'exact', head: true });
+  if (depois) log(`<br>⚠ Restam ${depois} movimentos — sem permissão para os apagar. `
+                + 'Verifica as políticas RLS da tabela movimentos.', 'warn');
+  else log(`<br><strong>${n} movimentos apagados. A tabela está vazia.</strong> `
+         + 'Escolhe a folha e carrega em Importar para a repor.', 'ok');
+  document.getElementById('btnZ').disabled = false;
+  setStatus('concluído');
+}
+
+// Apaga todos os movimentos de 2026 de TODAS as contas, venham de onde vierem.
+// O "Substituir" só limpa as contas que constam da folha; esta operação apanha
+// também restos de importações antigas em contas com outro id.
+async function limpar2026() {
+  if (!confirm('APAGAR todos os movimentos de 2026, em todas as contas?\n\n'
+             + 'Movimentos anteriores a 2026 não são tocados.\n'
+             + 'Faz backup em /backup.html antes.')) return;
+  if (!confirm('Confirmação final: isto apaga dados. Continuar?')) return;
+  document.getElementById('log').innerHTML = '';
+  if (!await ensureAuth()) return;
+  document.getElementById('btnL').disabled = true;
+  setStatus('a ler a tabela…');
+
+  // NÃO se filtra por data no servidor. A comparação de datas falhava para
+  // parte das linhas (formato/tipo da coluna), e essas sobreviviam ao
+  // apagamento. Lê-se tudo e decide-se aqui, pelo texto da data.
+  const todas = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await sb.from('movimentos').select('id,data,conta_id').range(from, from + 999);
+    if (error) { log('✗ ' + error.message, 'err'); document.getElementById('btnL').disabled = false; return; }
+    if (!data || !data.length) break;
+    todas.push(...data);
+    setStatus(`${todas.length} linhas lidas…`);
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+  log(`Tabela lida: <strong>${todas.length}</strong> movimentos.`, 'info');
+
+  // Distribuição por ano, para se ver o que existe
+  const porAno = {};
+  todas.forEach(r => {
+    const a = String(r.data || '').slice(0, 4) || '(sem data)';
+    porAno[a] = (porAno[a] || 0) + 1;
+  });
+  let h = '<table><tr><th>ano</th><th class="num">movimentos</th></tr>';
+  Object.keys(porAno).sort().forEach(a => {
+    h += `<tr><td class="${a === '2026' ? 'warn' : ''}">${a}</td><td class="num">${porAno[a]}</td></tr>`;
+  });
+  log(h + '</table>');
+
+  const alvo = todas.filter(r => String(r.data || '').slice(0, 4) === '2026');
+  if (!alvo.length) { log('Não há movimentos de 2026.', 'ok'); document.getElementById('btnL').disabled = false; setStatus('nada a fazer'); return; }
+  log(`A apagar <strong>${alvo.length}</strong> movimentos de 2026…`, 'warn');
+
+  const r = await apagarIds(alvo.map(x => x.id));
+  if (r.erro) { log('✗ ' + r.erro.message, 'err'); document.getElementById('btnL').disabled = false; return; }
+  if (r.apagados < alvo.length) { avisoRLS(alvo.length, r.apagados); document.getElementById('btnL').disabled = false; setStatus('bloqueado'); return; }
+
+  // confirmação: volta a ler e conta o que sobrou de 2026
+  let resto = 0; from = 0;
+  while (true) {
+    const { data } = await sb.from('movimentos').select('data').range(from, from + 999);
+    if (!data || !data.length) break;
+    resto += data.filter(x => String(x.data || '').slice(0, 4) === '2026').length;
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+  if (resto) log(`<br>⚠ Ainda restam ${resto} movimentos de 2026.`, 'err');
+  else log(`<br><strong>${r.apagados} apagados. Não resta nenhum movimento de 2026.</strong> `
+         + 'Escolhe a folha e carrega em Importar.', 'ok');
+  document.getElementById('btnL').disabled = false;
+  setStatus('concluído');
+}
+
+async function substituir() {
+  if (!confirm('APAGAR todos os movimentos de 2026 nas contas mapeadas e repor a partir da folha?\n\n'
+             + 'Movimentos anteriores a 2026 não são tocados.\n'
+             + 'Faz backup em /backup.html antes de continuar.')) return;
+  if (!confirm('Confirmação final: esta operação apaga dados. Continuar?')) return;
+  document.getElementById('log').innerHTML = '';
+  if (!await ensureAuth()) return;
+  document.getElementById('btnR').disabled = true;
+  setStatus('a substituir…');
+
+  const d = await carregarDados();
+  const contas = [...new Set(d.map(x => x.conta_id))];
+  let apagados = 0, inseridos = 0, erros = 0;
+
+  for (const c of contas) {
+    const destino = MAPA[c] || c;
+    // 1) apagar o ano de 2026 nesta conta
+    // Sem filtro de data no servidor: lê-se a conta toda e filtra-se aqui pelo
+    // texto do ano, que é imune ao tipo/formato da coluna.
+    let daConta = [], off = 0;
+    while (true) {
+      const { data, error: e1 } = await sb.from('movimentos').select('id,data')
+        .eq('conta_id', destino).range(off, off + 999);
+      if (e1) { erros++; log(`✗ ${destino}: ${e1.message}`, 'err'); break; }
+      if (!data || !data.length) break;
+      daConta.push(...data);
+      if (data.length < 1000) break;
+      off += 1000;
+    }
+    const ids = daConta.filter(x => String(x.data || '').slice(0, 4) === '2026').map(x => x.id);
+    const rdel = await apagarIds(ids);
+    if (rdel.erro) { erros++; log(`✗ apagar ${destino}: ${rdel.erro.message}`, 'err'); }
+    apagados += rdel.apagados;
+    if (rdel.apagados < ids.length) {
+      avisoRLS(ids.length, rdel.apagados);
+      log('Substituição interrompida — sem apagar, a importação duplicaria valores.', 'err');
+      document.getElementById('btnR').disabled = false;
+      setStatus('bloqueado');
+      return;
+    }
+
+    // 2) inserir a folha, por ordem cronológica
+    await sb.from('contas').upsert({ id: destino }, { onConflict: 'id' });
+    const { data: top } = await sb.from('movimentos').select('seq')
+      .eq('conta_id', destino).order('seq', { ascending: false }).limit(1);
+    let seq = (top && top[0] && top[0].seq) || 0;
+    const linhas = d.filter(x => x.conta_id === c)
+      .sort((a, b) => (a.ordem || 0) - (b.ordem || 0))   // ordem da folha: dentro do mesmo dia o saldo depende dela
+      .map(m => {
+        seq++;
+        const o = { conta_id: destino, data: m.data, movimento: m.movimento,
+          valor: m.valor, saldo: m.saldo == null ? 0 : m.saldo,
+          categoria: m.categoria || '', detalhes: m.detalhes || '', seq };
+        if (temSubcat) o.subcategoria = m.subcategoria || '';
+        return o;
+      });
+    for (let i = 0; i < linhas.length; i += 200) {
+      const { error } = await sb.from('movimentos').insert(linhas.slice(i, i + 200));
+      if (error) { erros++; log(`✗ inserir ${destino}: ${error.message}`, 'err'); }
+      else inseridos += Math.min(200, linhas.length - i);
+    }
+    log(`✓ ${destino}: ${ids.length} apagados · ${linhas.length} repostos`, 'ok');
+    setStatus(`${inseridos} repostos…`);
+  }
+
+  // 2026 pode ter ficado em contas que não constam da folha (contas antigas,
+  // ids duplicados). Essas não são tocadas acima — são listadas aqui.
+  const destinos = new Set(contas.map(c => MAPA[c] || c));
+  const orfas = new Map();
+  let from = 0;
+  while (true) {
+    const { data, error } = await sb.from('movimentos').select('id,conta_id,data')
+      .range(from, from + 999);
+    if (error || !data || !data.length) break;
+    data.filter(r => String(r.data || '').slice(0, 4) === '2026').forEach(r => {
+      if (!destinos.has(r.conta_id)) {
+        if (!orfas.has(r.conta_id)) orfas.set(r.conta_id, []);
+        orfas.get(r.conta_id).push(r.id);
+      }
+    });
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+
+  log(`<br><strong>Concluído: ${apagados} apagados, ${inseridos} repostos` +
+      `${erros ? `, ${erros} erros` : ''}.</strong>`, erros ? 'warn' : 'ok');
+
+  if (orfas.size) {
+    let h = '<br><strong>Ainda há 2026 em contas que não estão na folha:</strong>'
+          + '<table><tr><th>conta_id</th><th class="num">linhas de 2026</th></tr>';
+    let tot = 0;
+    for (const [cid, ids] of orfas) { tot += ids.length; h += `<tr><td>${cid}</td><td class="num">${ids.length}</td></tr>`; }
+    h += `<tr style="background:#1a1a2e;font-weight:bold"><td>TOTAL</td><td class="num">${tot}</td></tr></table>`;
+    log(h, 'warn');
+    window.__ORFAS = orfas;
+    log('<button onclick="apagarOrfas()" class="danger">Apagar também estas ' + tot + ' linhas de 2026</button>'
+      + ' <span class="muted">— só se tiveres a certeza de que não são usadas.</span>');
+  } else {
+    log('2026 fica exactamente como a folha. Anos anteriores intactos.', 'info');
+  }
+  setStatus('concluído');
+}
+
+async function apagarOrfas() {
+  const orfas = window.__ORFAS;
+  if (!orfas || !orfas.size) return;
+  const tot = [...orfas.values()].reduce((s, a) => s + a.length, 0);
+  if (!confirm(`Apagar ${tot} movimentos de 2026 em contas fora da folha?`)) return;
+  let n = 0;
+  for (const [cid, ids] of orfas) {
+    const r = await apagarIds(ids);
+    if (r.erro) { log(`✗ ${cid}: ${r.erro.message}`, 'err'); continue; }
+    n += r.apagados;
+    if (r.apagados < ids.length) { avisoRLS(ids.length, r.apagados); return; }
+    log(`✓ ${cid}: ${r.apagados} apagados`, 'ok');
+  }
+  log(`<br><strong>${n} linhas removidas.</strong> 2026 fica exactamente como a folha.`, 'ok');
+  window.__ORFAS = null;
+}
+
+async function importar() {
+  if (!confirm('Inserir os movimentos de 2026 na base de dados?\n\nNada é apagado; os repetidos são ignorados.')) return;
+  document.getElementById('log').innerHTML = '';
+  if (!await ensureAuth()) return;
+  document.getElementById('btnI').disabled = true;
+  setStatus('a importar…');
+
+  const resumo = await analisar();
+  let inseridos = 0, erros = 0;
+
+  for (const r of resumo) {
+    if (!r.inserir.length) { log(`· ${r.conta}: nada novo`, 'muted'); continue; }
+
+    // garantir que a conta existe
+    await sb.from('contas').upsert({ id: r.destino }, { onConflict: 'id' });
+
+    // seq: continua a partir do máximo existente, por ordem cronológica
+    const { data: top } = await sb.from('movimentos').select('seq')
+      .eq('conta_id', r.destino).order('seq', { ascending: false }).limit(1);
+    let seq = (top && top[0] && top[0].seq) || 0;
+
+    const ordenados = [...r.inserir].sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+    const linhas = ordenados.map(m => {
+      seq++;
+      const o = {
+        conta_id: r.destino, data: m.data, movimento: m.movimento,
+        valor: m.valor, saldo: m.saldo == null ? 0 : m.saldo,
+        categoria: m.categoria || '', detalhes: m.detalhes || '', seq,
+      };
+      if (temSubcat) o.subcategoria = m.subcategoria || '';
+      return o;
+    });
+
+    for (let i = 0; i < linhas.length; i += 200) {
+      const lote = linhas.slice(i, i + 200);
+      const { error } = await sb.from('movimentos').insert(lote);
+      if (error) { erros++; log(`✗ ${r.conta} lote ${i / 200 + 1}: ${error.message}`, 'err'); }
+      else { inseridos += lote.length; setStatus(`${inseridos} inseridos…`); }
+    }
+    log(`✓ ${r.conta} → ${r.destino}: ${linhas.length} inseridos`, 'ok');
+  }
+
+  log(`<br><strong>Concluído: ${inseridos} movimentos inseridos${erros ? `, ${erros} lotes com erro` : ''}.</strong>`,
+      erros ? 'warn' : 'ok');
+  log('Abre o ERP e confirma os saldos em Extratos.', 'info');
+  setStatus('concluído');
+}
+</script>
+</body>
+</html>

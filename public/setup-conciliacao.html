@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head><title>Setup Conciliação Previsão ↔ Fatura — Rio Capital ERP</title>
+<meta charset="utf-8"/>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:900px;margin:0 auto;line-height:1.6}
+  h1{color:#C8A96E}
+  pre{background:#1a1a2e;padding:18px;border-radius:8px;overflow-x:auto;border-left:4px solid #C8A96E;font-size:13px;white-space:pre-wrap;word-break:break-word}
+  .step{background:#1a1a2e;padding:18px;border-radius:8px;margin:14px 0}
+  .step-num{display:inline-block;background:#C8A96E;color:#0f0f1a;border-radius:50%;width:28px;height:28px;text-align:center;line-height:28px;font-weight:bold;margin-right:8px}
+  a{color:#C8A96E}
+  .dim{color:#9a9ab0;font-size:12px}
+  .aviso{border-left:4px solid #dc6b6b}
+</style>
+</head>
+<body>
+<h1>↔ Setup — Conciliação entre previsões e faturas</h1>
+
+<p>O mesmo custo pode entrar no ERP por dois caminhos: como <strong>previsão</strong> (um pagamento manual ou uma despesa recorrente) e, mais tarde, como <strong>fatura</strong> no Contas a Pagar. Se os dois ficarem de pé, o mês conta o custo a dobrar.</p>
+
+<p>A partir do v127, ao gravar uma fatura nova o ERP procura previsões parecidas e pergunta se é o mesmo custo. Ao ligar, a <strong>ocorrência</strong> prevista sai do Fluxo Futuro — só aquela. Numa previsão de 4 parcelas sai a parcela ligada e as outras três ficam; numa avença mensal sai o mês ligado e a avença continua nos seguintes.</p>
+
+<div class="step">
+  <h3><span class="step-num">1</span>Abre o SQL Editor do Supabase</h3>
+  <p>Vai a <a href="https://supabase.com/dashboard/project/esymjdrvcpwsoevnqljq/sql/new" target="_blank">Supabase SQL Editor</a> e cola o SQL abaixo.</p>
+</div>
+
+<div class="step">
+  <h3><span class="step-num">2</span>Corre o SQL</h3>
+<pre>-- Na fatura fica o rasto de que previsão substituiu
+alter table faturas add column if not exists previsao_origem text;   -- 'manual' | 'recorrente'
+alter table faturas add column if not exists previsao_id     text;   -- id do pagamento_extra ou da regra
+alter table faturas add column if not exists previsao_data   date;   -- a ocorrência concreta
+
+-- A ocorrência prevista que já tem fatura. Guarda-se a OCORRÊNCIA, não a
+-- previsão inteira: a parcela 2/4 sai, as outras três ficam.
+create table if not exists previsoes_baixas (
+  id              text primary key,
+  origem          text        not null,      -- 'manual' | 'recorrente'
+  origem_id       text        not null,      -- id do pagamento_extra ou da regra recorrente
+  data_ocorrencia date        not null,      -- a data da ocorrência consumida
+  fatura_id       text,
+  empresa         text,
+  valor_previsto  numeric,
+  valor_fatura    numeric,
+  criado_por      uuid,
+  created_at      timestamptz not null default now()
+);
+
+-- Uma ocorrência só pode ser consumida uma vez (é isto que o upsert usa)
+create unique index if not exists idx_baixas_ocorrencia
+  on previsoes_baixas(origem, origem_id, data_ocorrencia);
+create index if not exists idx_baixas_fatura on previsoes_baixas(fatura_id);
+
+alter table previsoes_baixas enable row level security;
+
+drop policy if exists "ler baixas"    on previsoes_baixas;
+drop policy if exists "criar baixas"  on previsoes_baixas;
+drop policy if exists "editar baixas" on previsoes_baixas;
+drop policy if exists "apagar baixas" on previsoes_baixas;
+
+create policy "ler baixas"    on previsoes_baixas for select using (true);
+create policy "criar baixas"  on previsoes_baixas for insert with check (true);
+create policy "editar baixas" on previsoes_baixas for update using (true) with check (true);
+create policy "apagar baixas" on previsoes_baixas for delete using (true);
+
+-- Um item de mapa que entrou sem fatura (uma avença, uma previsão) pode
+-- recebê-la mais tarde: é aqui que fica essa ligação.
+alter table mapas_pagamento_itens add column if not exists fatura_id text;
+
+-- Tempo real: a previsão desaparece do fluxo sem ser preciso recarregar
+do $$ begin
+  if not exists (select 1 from pg_publication_tables
+                 where pubname = 'supabase_realtime' and tablename = 'previsoes_baixas') then
+    alter publication supabase_realtime add table previsoes_baixas;
+  end if;
+end $$;
+
+notify pgrst, 'reload schema';</pre>
+</div>
+
+<div class="step">
+  <h3><span class="step-num">3</span>Confirma</h3>
+  <p>No ERP: <strong>Contas a Pagar → + Nova fatura</strong>. Lança uma fatura com o valor e a data de uma despesa recorrente que exista (ex.: a contabilidade deste mês). Ao carregar em <strong>Guardar</strong> abre o painel “Este custo já estava previsto”.</p>
+  <p>Depois de ligar: a fatura fica com a etiqueta verde <strong>↔ previsão</strong> e, no <strong>Fluxo Futuro</strong>, esse mês da despesa deixa de ter a linha prevista — passa a ter só a fatura.</p>
+</div>
+
+<div class="step">
+  <h3><span class="step-num">4</span>Mapas de pagamento (v130)</h3>
+  <p>No <strong>Pagamentos → Novo mapa</strong> (e no <strong>+ Adicionar pagamentos</strong> de um mapa por aprovar) aparecem agora as <strong>despesas recorrentes sem fatura</strong>, marcadas como <code>Recorrente</code>, com a data em que se pagam. Uma ocorrência por mês: novembro e dezembro da mesma avença são duas linhas.</p>
+  <p>Dentro do mapa, um item que entrou sem fatura mostra o botão <strong>🔗 ligar fatura</strong>. Ao ligar, a ocorrência prevista sai do Fluxo Futuro — é a mesma baixa do passo 2, por isso este SQL serve os dois.</p>
+</div>
+
+<div class="step aviso">
+  <h3>Enquanto não correres o SQL</h3>
+  <p>A fatura <strong>é criada na mesma</strong>, mas a previsão não sai do fluxo e o ERP avisa-te com uma mensagem a dizer exactamente isso. Não se perde nada; fica é o custo a contar duas vezes até correres o SQL.</p>
+</div>
+
+<p class="dim">Desfazer: eliminar a fatura devolve a previsão ao Fluxo Futuro automaticamente. O custo continua a existir — só deixa de ter fatura.</p>
+
+</body>
+</html>

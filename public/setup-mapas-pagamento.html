@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head><title>Setup Mapas de Pagamento — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:1100px;margin:0 auto;line-height:1.6}
+  h1{color:#C8A96E}
+  h2{color:#C8A96E;border-bottom:1px solid #333;padding-bottom:6px;margin-top:28px}
+  pre{background:#1a1a2e;padding:18px;border-radius:8px;overflow-x:auto;border-left:4px solid #C8A96E;font-size:12px;white-space:pre-wrap;word-break:break-word;line-height:1.5}
+  button{background:#C8A96E;border:none;padding:11px 22px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px}
+  .step{background:#1a1a2e;padding:18px;border-radius:8px;margin:14px 0;border-left:4px solid #444}
+  .step.done{border-left-color:#16a34a}
+  .ok{color:#16a34a}.err{color:#dc2626}.warn{color:#f59e0b}.info{color:#C8A96E}
+  a{color:#C8A96E}
+  #result{margin-top:14px;padding:14px;border-radius:6px;display:none}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{padding:6px 10px;border-bottom:1px solid #2a2a3e;text-align:left}
+  th{color:#C8A96E;background:#0f0f1a}
+</style>
+</head>
+<body>
+<h1>⚙️ Setup — Mapas de Pagamento</h1>
+
+<div class="step">
+  <p>Esta página cria as tabelas necessárias para a feature <strong>Mapas de Pagamento</strong> (aprovação 2 níveis).</p>
+  <p>Abre o <a href="https://supabase.com/dashboard/project/esymjdrvcpwsoevnqljq/sql/new" target="_blank">Supabase SQL Editor</a> e cola o SQL abaixo.</p>
+</div>
+
+<h2>SQL — copia e cola tudo</h2>
+<pre>-- 1. Tabela principal: cabeçalho do mapa
+CREATE TABLE IF NOT EXISTS mapas_pagamento (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  numero text,                                    -- número incremental amigável (ex: MP-2026-001)
+  descricao text,
+  status text NOT NULL DEFAULT 'pendente_nivel_1',
+    -- valores possíveis: pendente_nivel_1 | pendente_nivel_2 | aprovado | recusado
+  total_valor numeric NOT NULL DEFAULT 0,
+  created_by uuid REFERENCES profiles(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  aprovado_n1_por uuid REFERENCES profiles(id),
+  aprovado_n1_em timestamptz,
+  aprovado_n2_por uuid REFERENCES profiles(id),
+  aprovado_n2_em timestamptz,
+  recusado_por uuid REFERENCES profiles(id),
+  recusado_em timestamptz,
+  motivo_recusa text
+);
+
+-- 2. Itens do mapa — referencia o tipo (fatura/pagamento/comissao) + id da origem
+CREATE TABLE IF NOT EXISTS mapas_pagamento_itens (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  mapa_id uuid NOT NULL REFERENCES mapas_pagamento(id) ON DELETE CASCADE,
+  tipo_origem text NOT NULL,                      -- 'fatura' | 'pagamento_extra' | 'comissao_sinal' | 'comissao_escritura' | 'recebivel_escritura'
+  origem_id text NOT NULL,                        -- id da fatura, pagamento_extra ou venda
+  descricao text NOT NULL,
+  fornecedor text,
+  empresa text,
+  categoria text,
+  valor numeric NOT NULL,
+  vencimento date,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_mpi_mapa_id ON mapas_pagamento_itens(mapa_id);
+CREATE INDEX IF NOT EXISTS idx_mp_status ON mapas_pagamento(status);
+
+-- 3. Coluna de nível de aprovação nos perfis
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS approval_level int NOT NULL DEFAULT 0;
+  -- 0 = sem aprovação, 1 = nível 1 (ex: Felipe), 2 = nível 2 (ex: Marcelo, Henrique, Marcia)
+
+-- 4. Coluna "permite criar mapas" (qualquer admin pode por defeito; permite estender a outros utilizadores)
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS can_create_mapas boolean NOT NULL DEFAULT false;
+
+-- 5. RLS (Row Level Security) — políticas
+ALTER TABLE mapas_pagamento ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mapas_pagamento_itens ENABLE ROW LEVEL SECURITY;
+
+-- Política mais simples: qualquer authenticated user vê e mexe (apertaremos depois se for preciso)
+DROP POLICY IF EXISTS "auth full access mapas" ON mapas_pagamento;
+CREATE POLICY "auth full access mapas" ON mapas_pagamento
+  FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "auth full access mapas_itens" ON mapas_pagamento_itens;
+CREATE POLICY "auth full access mapas_itens" ON mapas_pagamento_itens
+  FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- 6. Sequência para numeração amigável: MP-2026-001, MP-2026-002...
+CREATE SEQUENCE IF NOT EXISTS mapas_pagamento_seq START 1;</pre>
+
+<button onclick="verificar()">🔍 Verificar se as tabelas e colunas existem</button>
+<div id="result"></div>
+
+<h2>Configurar os utilizadores</h2>
+<p>Depois de correres o SQL acima, configura os níveis de aprovação dos utilizadores:</p>
+
+<pre>-- Felipe = nível 1 (aprova primeiro)
+UPDATE profiles SET approval_level = 1, can_create_mapas = true
+  WHERE email = 'felipe@riocapital.pt';
+
+-- Marcelo, Henrique, Marcia = nível 2 (aprovação final)
+-- (substitui os emails pelos reais, se forem diferentes)
+UPDATE profiles SET approval_level = 2, can_create_mapas = true
+  WHERE email IN ('marcelo@riocapital.pt', 'henrique@riocapital.pt', 'marcia@riocapital.pt');
+
+-- Thiago = pode criar mapas mas não aprova
+UPDATE profiles SET approval_level = 0, can_create_mapas = true
+  WHERE email = 'thiago@riocapital.pt';
+
+-- Ver o resultado
+SELECT email, role, approval_level, can_create_mapas FROM profiles ORDER BY email;</pre>
+
+<button onclick="verUtilizadores()">👥 Ver utilizadores e níveis</button>
+<div id="users"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let authed = false;
+async function ensureAuth() {
+  if (authed) return true;
+  const pwd = prompt('Palavra-passe do felipe@riocapital.pt:');
+  if (!pwd) return false;
+  const { error } = await client.auth.signInWithPassword({ email: 'felipe@riocapital.pt', password: pwd });
+  if (error) { alert('Login falhou: ' + error.message); return false; }
+  authed = true;
+  return true;
+}
+
+async function verificar() {
+  if (!await ensureAuth()) return;
+  const r = document.getElementById('result');
+  r.style.display = 'block';
+  r.style.background = '#1a1a2e';
+  r.innerHTML = '<span class="info">A verificar...</span>';
+  let html = '';
+
+  // mapas_pagamento
+  const { error: e1 } = await client.from('mapas_pagamento').select('id').limit(1);
+  html += e1
+    ? `<div class="err">❌ <code>mapas_pagamento</code>: ${e1.message}</div>`
+    : `<div class="ok">✅ <code>mapas_pagamento</code> existe</div>`;
+
+  // mapas_pagamento_itens
+  const { error: e2 } = await client.from('mapas_pagamento_itens').select('id').limit(1);
+  html += e2
+    ? `<div class="err">❌ <code>mapas_pagamento_itens</code>: ${e2.message}</div>`
+    : `<div class="ok">✅ <code>mapas_pagamento_itens</code> existe</div>`;
+
+  // profiles.approval_level
+  const { data: ps, error: e3 } = await client.from('profiles').select('id, approval_level, can_create_mapas').limit(1);
+  if (e3) {
+    html += `<div class="err">❌ profiles.approval_level: ${e3.message}</div>`;
+  } else if (!ps?.[0] || ps[0].approval_level === undefined) {
+    html += `<div class="err">❌ <code>profiles.approval_level</code>: coluna não existe</div>`;
+  } else {
+    html += `<div class="ok">✅ <code>profiles.approval_level</code> e <code>can_create_mapas</code> existem</div>`;
+  }
+
+  r.innerHTML = html;
+}
+
+async function verUtilizadores() {
+  if (!await ensureAuth()) return;
+  const r = document.getElementById('users');
+  r.innerHTML = '<div class="info">A carregar utilizadores...</div>';
+  const { data, error } = await client.from('profiles').select('email, role, approval_level, can_create_mapas').order('email');
+  if (error) { r.innerHTML = `<div class="err">${error.message}</div>`; return; }
+  let html = '<table><thead><tr><th>email</th><th>role</th><th>approval_level</th><th>can_create_mapas</th></tr></thead><tbody>';
+  data.forEach(u => {
+    const lvlLabel = u.approval_level === 1 ? '1 (nível 1)' : u.approval_level === 2 ? '2 (nível 2)' : '0';
+    html += `<tr><td>${u.email}</td><td>${u.role || ''}</td><td>${lvlLabel}</td><td>${u.can_create_mapas ? '✓' : '—'}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  r.innerHTML = html;
+}
+</script>
+</body>
+</html>

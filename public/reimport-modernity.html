@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<head><title>Relançar Modernity — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:1200px;margin:0 auto}
+  h1{color:#C8A96E}
+  button{background:#C8A96E;border:none;padding:11px 22px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px}
+  button:disabled{opacity:0.5;cursor:default}
+  button.danger{background:#dc2626;color:#fff}
+  button.secondary{background:#666;color:#fff}
+  select,input{background:#1a1a2e;color:#fff;border:1px solid #444;padding:8px;border-radius:6px;font-family:monospace;font-size:13px;margin:5px}
+  .desc{background:#1a1a2e;padding:14px;border-radius:8px;border-left:4px solid #C8A96E;margin:12px 0;font-size:12px;line-height:1.6}
+  #drop{border:2px dashed #555;border-radius:12px;padding:50px;text-align:center;color:#888;font-size:14px;cursor:pointer;margin:12px 0;transition:all .15s}
+  #drop.dragover{border-color:#C8A96E;background:#1a1a2e;color:#C8A96E}
+  #log{background:#1a1a2e;padding:18px;border-radius:8px;max-height:650px;overflow-y:auto;margin-top:18px;font-size:11px;line-height:1.55}
+  table{width:100%;border-collapse:collapse;font-size:11px}
+  th,td{padding:5px 8px;border-bottom:1px solid #2a2a3e;text-align:left}
+  th{color:#C8A96E;background:#1a1a2e;position:sticky;top:0;z-index:1}
+  .ok{color:#16a34a}.err{color:#dc2626}.info{color:#C8A96E}.warn{color:#f59e0b}.muted{color:#888}
+  .num{text-align:right;font-family:monospace}
+</style>
+</head>
+<body>
+<h1>🔄 Relançar Modernity BCP do zero</h1>
+
+<div class="desc">
+  <strong>O que isto faz:</strong> apaga <strong>todos</strong> os movimentos da <code>modernity_bcp</code> e reinsere a partir do Excel (aba "Modernity BCP" do Novo_Caixa_Unico, ou ficheiro próprio).<br><br>
+  <strong>Fluxo:</strong> 1) Backup automático → 2) Carregar Excel → 3) Dry-run → 4) Aplicar (apaga tudo + insere tudo).<br>
+  <strong>Não toca em:</strong> outras contas, faturas, pagamentos, vendas.<br>
+  Atualiza também o saldo na tabela <code>contas</code> para o último saldo do Excel.
+</div>
+
+<!-- Passo 1: backup auto -->
+<div class="desc">
+  <strong>Passo 1.</strong> Faz primeiro um backup dos movimentos atuais da Modernity (descarrega JSON):
+  <br><button onclick="fazerBackup()">💾 Backup dos movimentos atuais</button>
+  <span id="bkpStatus" class="muted"></span>
+</div>
+
+<!-- Passo 2: carregar Excel -->
+<div id="drop">📥 Arrasta aqui o Excel (.xlsx, .xlsm) com a aba "Modernity BCP"<br><span style="font-size:11px;color:#666">ou clica</span></div>
+<input id="fileInput" type="file" accept=".xlsx,.xlsm,.xls" style="display:none">
+
+<div id="sheetPicker" style="display:none;margin-top:10px"></div>
+
+<div id="actions" style="display:none;margin-top:14px">
+  <button onclick="run(true)">🔍 Dry-run</button>
+  <button onclick="run(false)" class="danger">⚠️ Apagar tudo + Reinserir</button>
+  <button onclick="resetAll()" class="secondary">🔁 Resetar</button>
+</div>
+
+<div id="log"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const CONTA_ID = 'modernity_bcp', EMPRESA_ID = 'modernity', BANCO = 'BCP';
+
+const CAT_MAP = {
+  'administrativo':'Administrativos','administrativos':'Administrativos',
+  'encargos financeiros':'Encargos financeiros','encargos banco':'Encargos financeiros',
+  'impostos e taxas':'Impostos e taxas',
+  'mutuo':'Mútuo','mútuo':'Mútuo','mútuo hsp':'Mútuo','mútuo zuka':'Mútuo',
+  'projetos':'Projetos/Soft Costs','projetos/soft costs':'Projetos/Soft Costs',
+  'outros':'Outro','salários':'Administrativos','ticket refeição':'Administrativos','segurança':'Obra',
+  'resgate':'Resgate RC','resgate rc':'Resgate RC','recebimento':'Recebimento',
+  'aporte rc':'Aporte RC','aporte investidores':'Aporte Investidores',
+  'fee gestão':'Fee Gestão','fiscalização':'Fiscalização',
+  'csc':'CSC','comissão':'Comissão','legais':'Legais','marketing':'Marketing',
+  'obra':'Obra','ajuste':'Ajuste','transporte':'Transportes','transportes':'Transportes',
+  'reembolso':'Reembolso','juros':'Juros','terreno':'Terreno',
+  'novos negócios':'Novos Negócios','vendas':'Vendas',
+};
+function normCat(t){if(!t)return'';const k=String(t).toLowerCase().trim();return CAT_MAP[k]||t;}
+function safeFloat(v){if(v==null||v==='')return null;if(typeof v==='number')return Math.round(v*100)/100;let s=v.toString().trim().replace(/[€$£\s]/g,'');if(s.includes('.')&&s.includes(','))s=s.replace(/\./g,'').replace(',','.');else if(s.includes(',')&&!s.includes('.'))s=s.replace(',','.');const f=parseFloat(s);return isNaN(f)?null:Math.round(f*100)/100;}
+function normalizeDate(v){if(!v)return null;if(v instanceof Date){const y=v.getFullYear(),m=String(v.getMonth()+1).padStart(2,'0'),d=String(v.getDate()).padStart(2,'0');return `${y}-${m}-${d}`;}const s=String(v).trim();if(/^\d{4}-\d{2}-\d{2}/.test(s))return s.substring(0,10);const m=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);if(m)return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;return null;}
+function uuid(){if(typeof crypto!=='undefined'&&crypto.randomUUID)return crypto.randomUUID();return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r:(r&0x3|0x8)).toString(16);});}
+
+let parsedWorkbook=null, parsedRows=null, authed=false;
+
+async function ensureAuth(){
+  if(authed)return true;
+  const pwd=prompt('Palavra-passe do felipe@riocapital.pt:');
+  if(!pwd)return false;
+  const{error}=await client.auth.signInWithPassword({email:'felipe@riocapital.pt',password:pwd});
+  if(error){alert('Login falhou: '+error.message);return false;}
+  authed=true;return true;
+}
+
+async function fazerBackup(){
+  if(!await ensureAuth())return;
+  const s=document.getElementById('bkpStatus');
+  s.textContent=' · A descarregar...'; s.className='info';
+  let all=[],from=0;
+  while(true){
+    const{data,error}=await client.from('movimentos').select('*').eq('conta_id',CONTA_ID).range(from,from+999);
+    if(error){s.textContent=' · ❌ '+error.message;s.className='err';return;}
+    if(!data?.length)break;
+    all=all.concat(data);if(data.length<1000)break;from+=1000;
+  }
+  const blob=new Blob([JSON.stringify({timestamp:new Date().toISOString(),count:all.length,conta_id:CONTA_ID,movimentos:all},null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=`backup-modernity-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.json`;a.click();
+  s.textContent=` · ✅ ${all.length} movimentos guardados`;s.className='ok';
+}
+
+const drop=document.getElementById('drop'),fileInput=document.getElementById('fileInput');
+drop.onclick=()=>fileInput.click();
+drop.ondragover=(e)=>{e.preventDefault();drop.classList.add('dragover');};
+drop.ondragleave=()=>drop.classList.remove('dragover');
+drop.ondrop=(e)=>{e.preventDefault();drop.classList.remove('dragover');if(e.dataTransfer.files[0])handleFile(e.dataTransfer.files[0]);};
+fileInput.onchange=(e)=>{if(e.target.files[0])handleFile(e.target.files[0]);};
+
+async function handleFile(f){
+  document.getElementById('log').innerHTML=`<div class="info">A ler ${f.name}...</div>`;
+  const buf=await f.arrayBuffer();
+  parsedWorkbook=XLSX.read(buf,{type:'array',cellDates:true});
+
+  // Procurar aba "Modernity"
+  let preferida=parsedWorkbook.SheetNames.find(n=>n.toLowerCase().includes('modernity'));
+  if(preferida){
+    parseSheet(preferida);
+  }else{
+    // Mostrar picker
+    const picker=document.getElementById('sheetPicker');
+    let html='<div class="warn">Não encontrei aba com "modernity" no nome. Escolhe a aba certa:</div><select onchange="parseSheet(this.value)"><option value="">--</option>';
+    parsedWorkbook.SheetNames.forEach(n=>html+=`<option value="${n}">${n}</option>`);
+    html+='</select>';
+    picker.innerHTML=html;
+    picker.style.display='block';
+  }
+}
+
+function parseSheet(sheetName){
+  if(!sheetName)return;
+  const ws=parsedWorkbook.Sheets[sheetName];
+  const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:null});
+  let headerIdx=-1;
+  for(let i=0;i<Math.min(8,rows.length);i++){
+    const cells=(rows[i]||[]).map(c=>(c==null?'':String(c)).toLowerCase().trim());
+    if(cells.some(c=>c.includes('data'))&&cells.some(c=>c.includes('descritivo')||c.includes('descri'))){headerIdx=i;break;}
+  }
+  if(headerIdx<0){document.getElementById('log').innerHTML='<div class="err">❌ Não encontrei cabeçalho com Data/Descritivo na aba '+sheetName+'</div>';return;}
+  const headers=rows[headerIdx].map(c=>(c==null?'':String(c)).toLowerCase().trim());
+  const cD=headers.findIndex(h=>h==='data');
+  const cDesc=headers.findIndex(h=>h.startsWith('descri'));
+  const cDeb=headers.findIndex(h=>h.startsWith('débit')||h.startsWith('debit'));
+  const cCred=headers.findIndex(h=>h.startsWith('crédit')||h.startsWith('credit'));
+  const cSaldo=headers.findIndex(h=>h.includes('saldo'));
+  const cTipo=headers.findIndex(h=>h.includes('tipo'));
+  const cObs=headers.findIndex(h=>h.includes('observ'));
+  const out=[];
+  for(let i=headerIdx+1;i<rows.length;i++){
+    const r=rows[i]||[];
+    const data=normalizeDate(r[cD]);
+    const desc=r[cDesc];
+    if(!data||!desc)continue;
+    const deb=cDeb>=0?safeFloat(r[cDeb]):null;
+    const cred=cCred>=0?safeFloat(r[cCred]):null;
+    let valor=0;
+    if(cred!=null&&deb==null)valor=cred;
+    else if(deb!=null&&cred==null)valor=deb;
+    else if(cred!=null&&deb!=null)valor=(deb||0)+(cred||0);
+    const saldo=cSaldo>=0?safeFloat(r[cSaldo]):null;
+    const tipo=cTipo>=0?r[cTipo]:null;
+    const obs=cObs>=0?r[cObs]:null;
+    out.push({data,movimento:String(desc).trim(),valor,saldo:saldo==null?0:saldo,categoria:normCat(tipo),detalhes:obs?String(obs).trim():''});
+  }
+  parsedRows=out;
+  document.getElementById('log').innerHTML=`<div class="ok">✅ ${out.length} linhas lidas da aba "${sheetName}" (${out[0]?.data} → ${out[out.length-1]?.data})</div>`;
+  drop.style.display='none';
+  document.getElementById('sheetPicker').style.display='none';
+  document.getElementById('actions').style.display='block';
+}
+
+function resetAll(){parsedRows=null;drop.style.display='block';document.getElementById('actions').style.display='none';document.getElementById('log').innerHTML='';}
+
+async function run(dryRun){
+  if(!parsedRows){alert('Carrega o Excel primeiro');return;}
+  if(!await ensureAuth())return;
+
+  if(!dryRun){
+    if(!confirm("⚠️ Vai APAGAR todos os movimentos da Modernity BCP e reinserir do Excel.\n\nConfirmas?"))return;
+  }
+
+  const log=document.getElementById('log');
+  let html=`<div class="info">A processar ${dryRun?'(dry-run)':'(REAL)'}...</div>`;
+  log.innerHTML=html;
+
+  // Buscar existentes
+  let existing=[],offset=0;
+  while(true){
+    const{data,error}=await client.from('movimentos').select('id').eq('conta_id',CONTA_ID).range(offset,offset+999);
+    if(error){html+=`<div class="err">❌ ${error.message}</div>`;log.innerHTML=html;return;}
+    if(!data?.length)break;
+    existing=existing.concat(data);if(data.length<1000)break;offset+=1000;
+  }
+
+  html+=`<div>Supabase atual: <strong>${existing.length}</strong> movs · Excel: <strong>${parsedRows.length}</strong> movs</div>`;
+
+  // Preview
+  html+='<div style="margin:10px 0;background:#0f0f1a;border-radius:6px;padding:8px"><table><thead><tr><th>#</th><th>data</th><th>descrição</th><th class="num">valor</th><th class="num">saldo</th><th>categoria</th></tr></thead><tbody>';
+  parsedRows.slice(0,8).forEach((r,i)=>{html+=`<tr><td>${i+1}</td><td>${r.data}</td><td>${r.movimento.substring(0,35)}</td><td class="num">${r.valor.toLocaleString('pt-PT',{minimumFractionDigits:2})}</td><td class="num">${r.saldo.toLocaleString('pt-PT',{minimumFractionDigits:2})}</td><td>${r.categoria}</td></tr>`;});
+  if(parsedRows.length>8)html+=`<tr><td colspan="6" class="muted">...mais ${parsedRows.length-8} linhas (último: ${parsedRows[parsedRows.length-1].data} saldo ${parsedRows[parsedRows.length-1].saldo})</td></tr>`;
+  html+='</tbody></table></div>';
+  log.innerHTML=html;
+
+  if(dryRun){
+    html+=`<div class="info">═══════════════════════════════</div>`;
+    html+=`<div class="info"><strong>DRY-RUN</strong> — nada foi escrito</div>`;
+    html+=`<div>  Iria apagar: <span class="err">${existing.length}</span> · Iria inserir: <span class="ok">${parsedRows.length}</span></div>`;
+    html+=`<div>  Saldo final Excel: <strong>${parsedRows[parsedRows.length-1].saldo.toLocaleString('pt-PT',{minimumFractionDigits:2})} €</strong></div>`;
+    log.innerHTML=html;
+    return;
+  }
+
+  // APAGAR
+  let delOk=0,delErr=0;
+  for(let i=0;i<existing.length;i+=50){
+    const chunk=existing.slice(i,i+50);
+    const results=await Promise.all(chunk.map(m=>client.from('movimentos').delete().eq('id',m.id)));
+    results.forEach(r=>{if(r.error){delErr++;console.error(r.error);}else delOk++;});
+  }
+  html+=`<div class="${delErr?'warn':'ok'}">  🗑️ Apagados: ${delOk}/${existing.length}${delErr?` (${delErr} erros)`:''}</div>`;
+  log.innerHTML=html;
+
+  // INSERIR
+  const records=parsedRows.map((r,idx)=>({
+    id:uuid(),conta_id:CONTA_ID,empresa_id:EMPRESA_ID,banco:BANCO,
+    data:r.data,movimento:r.movimento,valor:r.valor,saldo:r.saldo,
+    categoria:r.categoria,detalhes:r.detalhes,seq:idx+1,
+  }));
+  let insOk=0,insErr=0;
+  for(let i=0;i<records.length;i+=100){
+    const chunk=records.slice(i,i+100);
+    const{data,error}=await client.from('movimentos').insert(chunk).select();
+    if(error){insErr+=chunk.length;console.error(error);html+=`<div class="err">  insert erro: ${error.message}</div>`;}
+    else insOk+=(data?.length||0);
+  }
+  html+=`<div class="${insErr?'warn':'ok'}">  ✅ Inseridos: ${insOk}/${records.length}${insErr?` (${insErr} erros)`:''}</div>`;
+
+  // Atualizar contas.saldo
+  const ultimoSaldo=parsedRows[parsedRows.length-1]?.saldo??0;
+  const{error:upErr}=await client.from('contas').update({saldo:ultimoSaldo,updated_at:new Date().toISOString()}).eq('id',CONTA_ID);
+  if(upErr)html+=`<div class="warn">⚠️ Erro atualizar contas.saldo: ${upErr.message}</div>`;
+  else html+=`<div class="ok">  ✅ contas.saldo atualizado para ${ultimoSaldo.toLocaleString('pt-PT',{minimumFractionDigits:2})} €</div>`;
+
+  html+=`<br><div class="info">═══════════════════════════════</div>`;
+  html+=`<div class="ok"><strong>CONCLUÍDO</strong> — Modernity reimportada</div>`;
+  log.innerHTML=html;
+}
+</script>
+</body>
+</html>

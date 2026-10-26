@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head><title>Setup pagamentos_extras.status — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:900px;margin:0 auto;line-height:1.6}
+  h1{color:#C8A96E}
+  pre{background:#1a1a2e;padding:18px;border-radius:8px;overflow-x:auto;border-left:4px solid #C8A96E;font-size:13px;white-space:pre-wrap;word-break:break-word}
+  button{background:#C8A96E;border:none;padding:11px 22px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px}
+  button.secondary{background:#444;color:#fff}
+  .step{background:#1a1a2e;padding:18px;border-radius:8px;margin:14px 0}
+  .step-num{display:inline-block;background:#C8A96E;color:#0f0f1a;border-radius:50%;width:28px;height:28px;text-align:center;line-height:28px;font-weight:bold;margin-right:8px}
+  .ok{color:#16a34a}.err{color:#dc2626}.warn{color:#f59e0b}
+  a{color:#C8A96E}
+  #result{margin-top:14px;padding:14px;border-radius:6px;display:none}
+</style>
+</head>
+<body>
+<h1>⚙️ Setup — coluna <code>status</code> em <code>pagamentos_extras</code></h1>
+
+<p>Para que se possa marcar pagamentos do Fluxo Futuro como <strong>Pagos</strong>, a tabela <code>pagamentos_extras</code> precisa de uma coluna <code>status</code>. Esta página verifica se já existe e dá-te o SQL a correr se não existir.</p>
+
+<button onclick="checkSchema()">🔍 Verificar se a coluna existe</button>
+
+<div id="result"></div>
+
+<div class="step">
+  <h3><span class="step-num">1</span>Abre o SQL Editor do Supabase</h3>
+  <p>Vai a <a href="https://supabase.com/dashboard/project/esymjdrvcpwsoevnqljq/sql/new" target="_blank">Supabase SQL Editor</a> e cola o SQL abaixo.</p>
+</div>
+
+<div class="step">
+  <h3><span class="step-num">2</span>Corre o SQL</h3>
+<pre>-- Adiciona coluna status com valor default 'Pendente'
+ALTER TABLE pagamentos_extras
+  ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'Pendente';
+
+-- Marca tudo o que existir como 'Pendente'
+UPDATE pagamentos_extras SET status = 'Pendente' WHERE status IS NULL;
+
+-- Index opcional para consultas rápidas por status
+CREATE INDEX IF NOT EXISTS idx_pagamentos_extras_status ON pagamentos_extras(status);</pre>
+</div>
+
+<div class="step">
+  <h3><span class="step-num">3</span>(opcional) Verifica novamente</h3>
+  <p>Carrega outra vez no botão acima para confirmar que a coluna ficou criada.</p>
+</div>
+
+<div class="step">
+  <h3><span class="step-num">4</span>Já está</h3>
+  <p>Volta à app, vai ao <strong>Fluxo Futuro</strong>, expande <strong>⚠️ Vencidas</strong>. Cada pagamento Manual passa a ter um botão <strong>✓ Marcar Pago</strong>. Quando carregares, sai do bucket de vencidas e o caixa líquido recupera o valor.</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+async function checkSchema() {
+  const result = document.getElementById('result');
+  result.style.display = 'block';
+  result.style.background = '#1a1a2e';
+  result.innerHTML = '<span style="color:#C8A96E">A verificar...</span>';
+
+  // Tenta SELECT na coluna; se não existir, falha
+  const { data, error } = await client.from('pagamentos_extras').select('id, status').limit(1);
+  if (error) {
+    if (error.message.toLowerCase().includes('column') && error.message.includes('status')) {
+      result.style.background = '#3a1a1a';
+      result.innerHTML = '<strong class="err">❌ A coluna <code>status</code> ainda não existe.</strong><br>Corre o SQL acima no Supabase para a criar.';
+    } else {
+      result.style.background = '#3a1a1a';
+      result.innerHTML = '<strong class="err">Erro:</strong> ' + error.message;
+    }
+    return;
+  }
+
+  // Existe — contar quantos pendentes/pagos
+  const { data: counts } = await client.from('pagamentos_extras').select('status');
+  const c = { Pendente: 0, Paga: 0, Pago: 0, outros: 0 };
+  (counts || []).forEach(r => {
+    if (c[r.status] !== undefined) c[r.status]++;
+    else c.outros++;
+  });
+  result.style.background = '#1a3a1a';
+  result.innerHTML = `<strong class="ok">✅ A coluna <code>status</code> existe.</strong><br>`
+    + `Total registos: ${(counts || []).length}<br>`
+    + `Pendentes: ${c.Pendente} · Pagas: ${c.Paga + c.Pago} · Outros: ${c.outros}`;
+}
+</script>
+</body>
+</html>

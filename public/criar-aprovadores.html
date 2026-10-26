@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head><title>Criar Utilizadores Aprovadores — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:1100px;margin:0 auto;line-height:1.5}
+  h1{color:#C8A96E}
+  h2{color:#C8A96E;border-bottom:1px solid #333;padding-bottom:6px;margin-top:24px}
+  button{background:#C8A96E;border:none;padding:11px 22px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px}
+  pre{background:#1a1a2e;padding:18px;border-radius:8px;overflow-x:auto;border-left:4px solid #C8A96E;font-size:12px;white-space:pre-wrap}
+  .desc{background:#1a1a2e;padding:14px;border-radius:8px;border-left:4px solid #C8A96E;margin:12px 0;font-size:12px}
+  .warn{background:#3a2a1a;border-left:4px solid #f59e0b;padding:14px;border-radius:8px;margin:12px 0}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{padding:8px 12px;border-bottom:1px solid #2a2a3e;text-align:left}
+  th{color:#C8A96E;background:#1a1a2e}
+  .ok{color:#16a34a}.err{color:#dc2626}.info{color:#C8A96E}.warn-txt{color:#f59e0b}
+  a{color:#C8A96E}
+  #log{margin-top:14px;padding:14px;border-radius:6px;background:#1a1a2e;display:none}
+</style>
+</head>
+<body>
+<h1>👥 Criar Utilizadores Aprovadores Nível 2</h1>
+
+<div class="desc">
+  Vai criar 3 utilizadores: Marcelo, Henrique e Marcia. Todos com role <code>admin</code> e <code>approval_level = 2</code> (aprovadores de nível 2).
+  <br><br>
+  Senha (todos): <code>@RioCapital2026</code>
+</div>
+
+<h2>Método recomendado: Supabase Dashboard</h2>
+
+<div class="warn">
+  ⚠️ O Supabase desencoraja criar utilizadores via signup público em produção (passa por confirmação de email). A forma mais limpa é pelo dashboard:
+</div>
+
+<p>1. Abre <a href="https://supabase.com/dashboard/project/esymjdrvcpwsoevnqljq/auth/users" target="_blank">Supabase Auth Users</a></p>
+<p>2. Para cada um dos 3, clica em <strong>"Add user"</strong> → <strong>"Create new user"</strong>:</p>
+
+<table>
+  <thead><tr><th>Email</th><th>Password</th><th>Auto Confirm</th></tr></thead>
+  <tbody>
+    <tr><td>marcelo@riocapital.pt</td><td>@RioCapital2026</td><td>✓ marca</td></tr>
+    <tr><td>henrique@riocapital.pt</td><td>@RioCapital2026</td><td>✓ marca</td></tr>
+    <tr><td>marcia@riocapital.pt</td><td>@RioCapital2026</td><td>✓ marca</td></tr>
+  </tbody>
+</table>
+
+<p>3. Depois de criados os 3 utilizadores, volta aqui e clica em <strong>"Configurar profiles e níveis"</strong>:</p>
+
+<button onclick="configurarProfiles()">⚙️ Configurar profiles e níveis (admin + aprovação N2)</button>
+
+<div id="log"></div>
+
+<h2>SQL alternativo (se preferires)</h2>
+<p>Se quiseres correr manualmente no SQL Editor depois de criar os utilizadores no dashboard:</p>
+<pre>-- Configurar Marcelo, Henrique e Marcia como admin + aprovação nível 2
+UPDATE profiles
+SET role = 'admin',
+    approval_level = 2,
+    can_create_mapas = true
+WHERE id IN (
+  SELECT id FROM auth.users
+  WHERE email IN ('marcelo@riocapital.pt', 'henrique@riocapital.pt', 'marcia@riocapital.pt')
+);
+
+-- Verificar
+SELECT p.email, p.role, p.approval_level, p.can_create_mapas
+FROM profiles p
+ORDER BY p.email;</pre>
+
+<h2>Verificar o resultado</h2>
+<button onclick="verUtilizadores()">👥 Ver utilizadores e níveis</button>
+<div id="users"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const ALVOS = ['marcelo@riocapital.pt', 'henrique@riocapital.pt', 'marcia@riocapital.pt'];
+
+let authed = false;
+async function ensureAuth() {
+  if (authed) return true;
+  const pwd = prompt('Palavra-passe do felipe@riocapital.pt:');
+  if (!pwd) return false;
+  const { error } = await client.auth.signInWithPassword({ email: 'felipe@riocapital.pt', password: pwd });
+  if (error) { alert('Login falhou: ' + error.message); return false; }
+  authed = true;
+  return true;
+}
+
+async function configurarProfiles() {
+  if (!await ensureAuth()) return;
+  const log = document.getElementById('log');
+  log.style.display = 'block';
+  log.innerHTML = '<div class="info">A procurar utilizadores e configurar profiles...</div>';
+
+  // 1. Procurar profiles existentes
+  const { data: existingProfiles, error } = await client.from('profiles').select('id, email, role, approval_level, can_create_mapas, nome');
+  if (error) {
+    log.innerHTML = '<div class="err">❌ Erro a listar profiles: ' + error.message + '</div>';
+    return;
+  }
+
+  let html = '<div class="info">Profiles encontrados:</div><ul>';
+  let encontrados = 0;
+  const naoEncontrados = [...ALVOS];
+  for (const p of existingProfiles) {
+    if (ALVOS.includes(p.email)) {
+      encontrados++;
+      const idx = naoEncontrados.indexOf(p.email);
+      if (idx > -1) naoEncontrados.splice(idx, 1);
+      html += `<li>${p.email} (id: ${p.id.slice(0,8)}...) — role: ${p.role || '(none)'}, level: ${p.approval_level ?? '(none)'}</li>`;
+    }
+  }
+  html += '</ul>';
+
+  if (naoEncontrados.length > 0) {
+    html += `<div class="err">⚠️ Faltam profiles: ${naoEncontrados.join(', ')}<br>Cria os utilizadores no <a href="https://supabase.com/dashboard/project/esymjdrvcpwsoevnqljq/auth/users" target="_blank">Supabase Auth Dashboard</a> primeiro.</div>`;
+  }
+
+  if (encontrados === 0) {
+    log.innerHTML = html;
+    return;
+  }
+
+  // 2. UPDATE em batch
+  html += '<div class="info" style="margin-top:10px">A atualizar profiles...</div>';
+  log.innerHTML = html;
+
+  const { data: updated, error: e2 } = await client.from('profiles')
+    .update({ role: 'admin', approval_level: 2, can_create_mapas: true })
+    .in('email', ALVOS)
+    .select();
+
+  if (e2) {
+    // Pode ser que a coluna email não exista em profiles
+    if (e2.message?.includes('email')) {
+      // Fallback: UPDATE pelo id (busca em auth.users via subquery não é possível em REST; faço-o em 2 passos)
+      const idsParaAtualizar = existingProfiles.filter(p => ALVOS.includes(p.email)).map(p => p.id);
+      const { data: u2, error: e3 } = await client.from('profiles')
+        .update({ role: 'admin', approval_level: 2, can_create_mapas: true })
+        .in('id', idsParaAtualizar)
+        .select();
+      if (e3) {
+        html += `<div class="err">❌ Falhou: ${e3.message}</div>`;
+        log.innerHTML = html;
+        return;
+      }
+      html += `<div class="ok">✅ ${u2.length} profiles atualizados (via id)</div>`;
+    } else {
+      html += `<div class="err">❌ Erro: ${e2.message}</div>`;
+      log.innerHTML = html;
+      return;
+    }
+  } else {
+    html += `<div class="ok">✅ ${updated.length} profiles atualizados</div>`;
+  }
+
+  html += '<div class="info">Carrega "Ver utilizadores" abaixo para confirmar.</div>';
+  log.innerHTML = html;
+}
+
+async function verUtilizadores() {
+  if (!await ensureAuth()) return;
+  const r = document.getElementById('users');
+  r.innerHTML = '<div class="info">A carregar...</div>';
+  const { data, error } = await client.from('profiles').select('email, nome, role, approval_level, can_create_mapas');
+  if (error) { r.innerHTML = `<div class="err">${error.message}</div>`; return; }
+  // ordenar pelo email no cliente (pode não existir a coluna)
+  data.sort((a, b) => String(a.email || a.nome || '').localeCompare(String(b.email || b.nome || '')));
+  let html = '<table><thead><tr><th>email/nome</th><th>role</th><th>approval_level</th><th>can_create_mapas</th></tr></thead><tbody>';
+  data.forEach(u => {
+    const lvl = u.approval_level === 1 ? '1 (Nível 1)' : u.approval_level === 2 ? '2 (Nível 2)' : '0';
+    const destacar = ALVOS.includes(u.email) ? 'background:#1f3a1f' : '';
+    html += `<tr style="${destacar}"><td>${u.email || u.nome || '—'}</td><td>${u.role || '—'}</td><td>${lvl}</td><td>${u.can_create_mapas ? '✓' : '—'}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  r.innerHTML = html;
+}
+</script>
+</body>
+</html>

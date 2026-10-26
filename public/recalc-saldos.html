@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+<head><title>Recalcular Saldos — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:1200px;margin:0 auto}
+  h1{color:#C8A96E}
+  button{background:#C8A96E;border:none;padding:11px 22px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px}
+  button:disabled{opacity:0.5;cursor:default}
+  button.danger{background:#dc2626;color:#fff}
+  button.secondary{background:#666;color:#fff}
+  select,input{background:#1a1a2e;color:#fff;border:1px solid #444;padding:8px;border-radius:6px;font-family:monospace;font-size:13px;margin:5px}
+  .desc{background:#1a1a2e;padding:14px;border-radius:8px;border-left:4px solid #C8A96E;margin:12px 0;font-size:12px;line-height:1.6}
+  #log{background:#1a1a2e;padding:18px;border-radius:8px;max-height:600px;overflow-y:auto;margin-top:18px;font-size:11px;line-height:1.55}
+  table{width:100%;border-collapse:collapse;font-size:11px}
+  th,td{padding:5px 8px;border-bottom:1px solid #2a2a3e;text-align:left}
+  th{color:#C8A96E;position:sticky;top:0;background:#1a1a2e;z-index:1}
+  .ok{color:#16a34a}.err{color:#dc2626}.info{color:#C8A96E}.warn{color:#f59e0b}.muted{color:#888}
+  .num{text-align:right;font-family:monospace}
+</style>
+</head>
+<body>
+<h1>🧮 Recalcular Saldos (somatório a partir do mais antigo)</h1>
+
+<div class="desc">
+  <strong>O que isto faz:</strong> para cada conta, pega o saldo do <strong>movimento mais antigo</strong> (o que está cronologicamente em primeiro, ordenado por <code>seq ASC</code>) como ponto de partida, e a partir daí <strong>acumula</strong> cada valor: <code>saldo[i] = saldo[i-1] + valor[i]</code>.<br><br>
+  <strong>Validação no fim:</strong> o saldo calculado para o último movimento deve bater certo com o saldo atual da conta (na tabela <code>contas</code>). Se não bater, há um <code>valor</code> errado algures no histórico e mostro a diferença.<br><br>
+  <strong>Risco:</strong> se um único <code>valor</code> estiver errado no meio, o erro propaga-se para todos os saldos seguintes. Faz primeiro <strong>Dry-run</strong> e revê a tabela de validação antes de aplicar.
+</div>
+
+<select id="conta">
+  <option value="">— Todas as contas —</option>
+  <option value="riocap_bcp">Rio Capital · BCP</option>
+  <option value="riocap_caixa_livre">Rio Capital · Caixa Livre</option>
+  <option value="riocap_cartão_7449">Rio Capital · Cartão 7449</option>
+  <option value="decadex_bcp">Decadexperience · BCP</option>
+  <option value="visionary_banco_invest">Visionary · Banco Invest</option>
+  <option value="barramansa_banco_invest">Barra Mansa · Banco Invest</option>
+  <option value="barramansa_miami_eua">Barra Mansa · Miami/EUA</option>
+  <option value="barramansa_revolut">Barra Mansa · Revolut</option>
+  <option value="barramansa_bb_americas">Barra Mansa · BB Americas</option>
+  <option value="curious_bcp">Curious · BCP</option>
+  <option value="modernity_bcp">Modernity · BCP</option>
+  <option value="wodelay_bcp">Without Delays · BCP</option>
+  <option value="nimitz_banco_atlântico">Nimitz · Banco Atlântico</option>
+  <option value="nimitz_revolut">Nimitz · Revolut</option>
+  <option value="nimitz_miami_eua">Nimitz · Miami/EUA</option>
+  <option value="shadow_bcp">Alternative Shadow · BCP</option>
+  <option value="classic_bni">Classic Revelation · BNI</option>
+  <option value="zuka_banco_atlântico">ZUKA · Banco Atlântico</option>
+  <option value="enigma_bcp">Enigma · BCP</option>
+</select>
+<button onclick="run(true)">🔍 Dry-run</button>
+<button onclick="run(false)" class="danger">⚠️ Aplicar recálculo</button>
+
+<div id="log"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let authed = false;
+async function ensureAuth() {
+  if (authed) return true;
+  const pwd = prompt('Palavra-passe do felipe@riocapital.pt:');
+  if (!pwd) return false;
+  const { error } = await client.auth.signInWithPassword({ email: 'felipe@riocapital.pt', password: pwd });
+  if (error) { alert('Login falhou: ' + error.message); return false; }
+  authed = true;
+  return true;
+}
+
+const fmt = (v) => new Intl.NumberFormat('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v || 0) + ' €';
+
+async function run(dryRun) {
+  if (!await ensureAuth()) return;
+  const log = document.getElementById('log');
+  log.innerHTML = '<div class="info">A carregar…</div>';
+
+  const selConta = document.getElementById('conta').value;
+  let contaIds = [];
+
+  if (selConta) {
+    contaIds = [selConta];
+  } else {
+    contaIds = Array.from(document.getElementById('conta').options).slice(1).map(o => o.value);
+  }
+
+  let html = '';
+  let grandUpdated = 0, grandErrors = 0, grandToUpdate = 0, grandContasOk = 0, grandContasErr = 0;
+
+  for (const cid of contaIds) {
+    // Pull saldo da conta (referência do banco)
+    const { data: contaData } = await client.from('contas').select('saldo').eq('id', cid).limit(1);
+    const saldoContaAtual = contaData?.[0]?.saldo ?? null;
+
+    // Pull todos os movimentos ordenados por seq ASC (do mais antigo para o mais recente)
+    let all = [], offset = 0;
+    while (true) {
+      const { data, error } = await client.from('movimentos')
+        .select('id, data, movimento, valor, saldo, seq')
+        .eq('conta_id', cid)
+        .order('seq', { ascending: true, nullsFirst: false })
+        .order('data', { ascending: true })
+        .range(offset, offset + 999);
+      if (error) { html += `<div class="err">❌ ${cid}: ${error.message}</div>`; break; }
+      if (!data?.length) break;
+      all = all.concat(data);
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+
+    if (all.length === 0) {
+      html += `<div class="warn">⚠️ ${cid}: 0 movimentos</div>`;
+      log.innerHTML = html;
+      continue;
+    }
+
+    // O movimento mais antigo é all[0]. O seu saldo é o ponto de partida.
+    const saldoInicial = parseFloat(all[0].saldo) || 0;
+
+    // Recalcular para a frente:
+    // saldo[0] mantém-se. saldo[i] = saldo[i-1] + valor[i] para i>=1.
+    let saldoCalc = saldoInicial;
+    const updates = []; // {id, oldSaldo, newSaldo}
+    for (let i = 0; i < all.length; i++) {
+      if (i === 0) {
+        // Não muda o primeiro
+        continue;
+      }
+      const valor = parseFloat(all[i].valor) || 0;
+      saldoCalc = Math.round((saldoCalc + valor) * 100) / 100;
+      const oldSaldo = Math.round(parseFloat(all[i].saldo) * 100) / 100;
+      if (Math.abs(saldoCalc - oldSaldo) > 0.01) {
+        updates.push({
+          id: all[i].id,
+          oldSaldo,
+          newSaldo: saldoCalc,
+          data: all[i].data,
+          desc: all[i].movimento,
+          idx: i,
+        });
+      }
+    }
+    // O loop começa em i=0 que apenas inicializa saldoCalc no saldo inicial; mas só processa updates a partir de i=1.
+    // saldoCalc final = saldo do último movimento calculado.
+
+    grandToUpdate += updates.length;
+    const saldoFinalCalc = saldoCalc;
+    const matchUltimo = saldoContaAtual !== null && Math.abs(saldoFinalCalc - saldoContaAtual) <= 0.01;
+
+    html += `<div class="info">📋 <strong>${cid}</strong> · ${all.length} movs</div>`;
+    html += `<div class="muted">  Saldo inicial (mais antigo): ${fmt(saldoInicial)} · Saldo final calculado: ${fmt(saldoFinalCalc)} · Saldo atual conta: ${saldoContaAtual !== null ? fmt(saldoContaAtual) : 'N/A'}</div>`;
+    if (saldoContaAtual !== null) {
+      const diff = saldoFinalCalc - saldoContaAtual;
+      if (matchUltimo) {
+        html += `<div class="ok">  ✅ Saldo final calculado bate com o saldo atual da conta</div>`;
+        grandContasOk++;
+      } else {
+        html += `<div class="err">  ⚠️ Diferença: ${diff>=0?'+':''}${fmt(diff)} — provavelmente há um <strong>valor</strong> errado no histórico</div>`;
+        grandContasErr++;
+      }
+    }
+    html += `<div>  Saldos a corrigir: <span class="warn">${updates.length}</span> / ${all.length - 1}</div>`;
+
+    // Mostrar primeiras 5 alterações
+    if (updates.length > 0) {
+      html += '<div style="margin:6px 0 10px 0;background:#0f0f1a;border-radius:6px;padding:8px"><table><thead><tr><th>#</th><th>data</th><th>descrição</th><th class="num">saldo antigo</th><th class="num">saldo novo</th><th class="num">Δ</th></tr></thead><tbody>';
+      updates.slice(0, 5).forEach(u => {
+        const delta = u.newSaldo - u.oldSaldo;
+        html += `<tr><td>${u.idx}</td><td>${u.data}</td><td>${(u.desc||'').substring(0,40)}</td><td class="num">${u.oldSaldo.toLocaleString('pt-PT',{minimumFractionDigits:2})}</td><td class="num">${u.newSaldo.toLocaleString('pt-PT',{minimumFractionDigits:2})}</td><td class="num ${delta>=0?'ok':'err'}">${delta>=0?'+':''}${delta.toFixed(2)}</td></tr>`;
+      });
+      if (updates.length > 5) html += `<tr><td colspan="6" class="muted">...mais ${updates.length - 5} linhas</td></tr>`;
+      html += '</tbody></table></div>';
+    } else {
+      html += `<div class="ok">  ✨ Nenhum saldo precisa de alteração</div>`;
+    }
+    log.innerHTML = html;
+
+    // Aplicar
+    if (!dryRun && updates.length > 0) {
+      let upOk = 0, upErr = 0;
+      for (let i = 0; i < updates.length; i += 50) {
+        const chunk = updates.slice(i, i + 50);
+        const results = await Promise.all(chunk.map(u =>
+          client.from('movimentos').update({ saldo: u.newSaldo }).eq('id', u.id)
+        ));
+        results.forEach(r => { if (r.error) { upErr++; console.error(r.error); } else upOk++; });
+      }
+      grandUpdated += upOk;
+      grandErrors += upErr;
+      html += `<div class="ok">  ✅ Aplicado: ${upOk}/${updates.length}` + (upErr ? ` <span class="err">(${upErr} erros)</span>` : ``) + '</div><br>';
+    } else {
+      html += '<br>';
+    }
+    log.innerHTML = html;
+  }
+
+  // Resumo
+  html += `<div class="info">═══════════════════════════════════════════</div>`;
+  html += `<div class="info"><strong>RESUMO</strong> ${dryRun ? '(DRY-RUN — nada foi escrito)' : ''}</div>`;
+  html += `<div>  Saldos a corrigir: <span class="warn">${grandToUpdate}</span></div>`;
+  html += `<div>  Contas com final ✅: <span class="ok">${grandContasOk}</span> · Contas com discrepância: <span class="err">${grandContasErr}</span></div>`;
+  if (!dryRun) html += `<div>  <span class="ok">Saldos atualizados: ${grandUpdated}</span>${grandErrors ? ' <span class="err">('+grandErrors+' erros)</span>' : ''}</div>`;
+  log.innerHTML = html;
+}
+</script>
+</body>
+</html>

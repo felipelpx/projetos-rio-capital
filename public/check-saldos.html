@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html>
+<head><title>Check Saldos — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:1300px;margin:0 auto}
+  h1{color:#C8A96E}
+  button{background:#C8A96E;border:none;padding:11px 22px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px}
+  button:disabled{opacity:0.5;cursor:default}
+  button.secondary{background:#666;color:#fff}
+  select,input{background:#1a1a2e;color:#fff;border:1px solid #444;padding:8px;border-radius:6px;font-family:monospace;font-size:13px;margin:5px}
+  .desc{background:#1a1a2e;padding:14px;border-radius:8px;border-left:4px solid #C8A96E;margin:12px 0;font-size:12px;line-height:1.6}
+  #log{background:#1a1a2e;padding:18px;border-radius:8px;max-height:680px;overflow-y:auto;margin-top:18px;font-size:11px;line-height:1.55}
+  table{width:100%;border-collapse:collapse;font-size:11px}
+  th,td{padding:5px 8px;border-bottom:1px solid #2a2a3e;text-align:left;vertical-align:top}
+  th{color:#C8A96E;position:sticky;top:0;background:#1a1a2e;z-index:1}
+  .ok{color:#16a34a}.err{color:#dc2626}.info{color:#C8A96E}.warn{color:#f59e0b}.muted{color:#888}
+  .num{text-align:right;font-family:monospace;white-space:nowrap}
+  tr.bad{background:#3a1a1a}
+  tr.bad td{border-bottom:1px solid #6b1c1c}
+  .pill{display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px}
+  .pill-ok{background:#1a3a1a;color:#22c55e}
+  .pill-err{background:#3a1a1a;color:#ef4444}
+</style>
+</head>
+<body>
+<h1>🔎 Check Saldos — Verificação de coerência</h1>
+
+<div class="desc">
+  Para cada movimento, calcula <code>saldo_anterior + valor_atual − saldo_atual</code>.<br>
+  Se = 0 → coerente. Se ≠ 0 → há erro nesta linha (no <strong>valor</strong> ou no <strong>saldo</strong>).<br><br>
+  <strong>Apenas valida movimentos com data ≥ 01/01/2025.</strong> O <code>saldo_anterior</code> usado para o primeiro movimento dentro do intervalo é o saldo do último movimento <em>antes</em> de 2025 (a âncora).<br><br>
+  Este check é <strong>não-destrutivo</strong> — apenas lê dados e mostra inconsistências.
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+  <select id="conta">
+    <option value="">— Todas as contas —</option>
+    <option value="riocap_bcp">Rio Capital · BCP</option>
+    <option value="riocap_caixa_livre">Rio Capital · Caixa Livre</option>
+    <option value="riocap_cartão_7449">Rio Capital · Cartão 7449</option>
+    <option value="decadex_bcp">Decadexperience · BCP</option>
+    <option value="visionary_banco_invest">Visionary · Banco Invest</option>
+    <option value="barramansa_banco_invest">Barra Mansa · Banco Invest</option>
+    <option value="barramansa_miami_eua">Barra Mansa · Miami/EUA</option>
+    <option value="barramansa_revolut">Barra Mansa · Revolut</option>
+    <option value="barramansa_bb_americas">Barra Mansa · BB Americas</option>
+    <option value="curious_bcp">Curious · BCP</option>
+    <option value="modernity_bcp">Modernity · BCP</option>
+    <option value="wodelay_bcp">Without Delays · BCP</option>
+    <option value="nimitz_banco_atlântico">Nimitz · Banco Atlântico</option>
+    <option value="nimitz_revolut">Nimitz · Revolut</option>
+    <option value="nimitz_miami_eua">Nimitz · Miami/EUA</option>
+    <option value="shadow_bcp">Alternative Shadow · BCP</option>
+    <option value="classic_bni">Classic Revelation · BNI</option>
+    <option value="zuka_banco_atlântico">ZUKA · Banco Atlântico</option>
+    <option value="enigma_bcp">Enigma · BCP</option>
+  </select>
+  <label>Desde: <input id="fromDate" type="date" value="2025-01-01"></label>
+  <label><input type="checkbox" id="onlyBad" checked> Mostrar só linhas com erro</label>
+  <label>Máx por conta: <input id="limitErrors" type="number" value="100" min="10" max="2000" style="width:80px"></label>
+  <button onclick="run()">▶ Verificar</button>
+  <button onclick="exportCSV()" class="secondary">📥 Exportar CSV</button>
+</div>
+
+<div id="log"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let authed = false;
+let lastBadRows = []; // Para exportar CSV
+
+async function ensureAuth() {
+  if (authed) return true;
+  const pwd = prompt('Palavra-passe do felipe@riocapital.pt:');
+  if (!pwd) return false;
+  const { error } = await client.auth.signInWithPassword({ email: 'felipe@riocapital.pt', password: pwd });
+  if (error) { alert('Login falhou: ' + error.message); return false; }
+  authed = true;
+  return true;
+}
+
+const fmt = (v) => new Intl.NumberFormat('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v || 0);
+
+async function run() {
+  if (!await ensureAuth()) return;
+  const log = document.getElementById('log');
+  log.innerHTML = '<div class="info">A carregar…</div>';
+  lastBadRows = [];
+
+  const selConta = document.getElementById('conta').value;
+  const onlyBad = document.getElementById('onlyBad').checked;
+  const limitErrors = parseInt(document.getElementById('limitErrors').value) || 100;
+  const fromDate = document.getElementById('fromDate').value || '2025-01-01';
+  const contaIds = selConta ? [selConta]
+    : Array.from(document.getElementById('conta').options).slice(1).map(o => o.value);
+
+  let html = '';
+  let grandBad = 0, grandTotalChecked = 0, grandContas = 0, grandContasComErro = 0;
+
+  for (const cid of contaIds) {
+    // 1. Buscar âncora — saldo do último movimento ANTES de fromDate
+    let ancoraSaldo = null;
+    let ancoraInfo = null;
+    {
+      const { data: ancoraData, error: ancoraErr } = await client.from('movimentos')
+        .select('id, data, movimento, valor, saldo, seq')
+        .eq('conta_id', cid)
+        .lt('data', fromDate)
+        .order('data', { ascending: false })
+        .order('seq', { ascending: false, nullsFirst: false })
+        .limit(1);
+      if (ancoraErr) { html += `<div class="err">❌ ${cid}: ${ancoraErr.message}</div>`; continue; }
+      if (ancoraData?.[0]) {
+        ancoraSaldo = parseFloat(ancoraData[0].saldo) || 0;
+        ancoraInfo = ancoraData[0];
+      }
+    }
+
+    // 2. Buscar TODOS os movimentos >= fromDate em ordem cronológica
+    let all = [], offset = 0;
+    while (true) {
+      const { data, error } = await client.from('movimentos')
+        .select('id, data, movimento, valor, saldo, seq')
+        .eq('conta_id', cid)
+        .gte('data', fromDate)
+        .order('seq', { ascending: true, nullsFirst: false })
+        .order('data', { ascending: true })
+        .range(offset, offset + 999);
+      if (error) { html += `<div class="err">❌ ${cid}: ${error.message}</div>`; break; }
+      if (!data?.length) break;
+      all = all.concat(data);
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+
+    if (all.length === 0) {
+      html += `<div class="warn">⚠️ ${cid}: 0 movimentos desde ${fromDate}</div>`;
+      log.innerHTML = html;
+      continue;
+    }
+    grandContas++;
+    grandTotalChecked += all.length;
+
+    // 3. Verificar coerência
+    // i=0: saldo_anterior = âncora (saldo do último mov antes de fromDate)
+    //       Se não há âncora (conta começou em 2025), só validamos a partir de i=1
+    // i>=1: saldo_anterior = saldo[i-1]
+    const badRows = []; // { idx, mov, prevMov, prevSaldo, esperado, diff }
+    let badCount = 0;
+    let firstChecked = ancoraSaldo !== null ? 0 : 1;
+    for (let i = firstChecked; i < all.length; i++) {
+      const prevSaldo = (i === 0) ? ancoraSaldo : (parseFloat(all[i-1].saldo) || 0);
+      const valor = parseFloat(all[i].valor) || 0;
+      const saldoActual = parseFloat(all[i].saldo) || 0;
+      const esperado = Math.round((prevSaldo + valor) * 100) / 100;
+      const diff = Math.round((esperado - saldoActual) * 100) / 100;
+      const isBad = Math.abs(diff) > 0.01;
+      if (isBad) {
+        badCount++;
+        if (badRows.length < limitErrors) {
+          badRows.push({
+            idx: i,
+            mov: all[i],
+            prevMov: i === 0 ? ancoraInfo : all[i-1],
+            prevSaldo,
+            esperado,
+            diff,
+          });
+          lastBadRows.push({
+            conta_id: cid,
+            data: all[i].data,
+            descricao: all[i].movimento,
+            valor: valor,
+            saldo_anterior: prevSaldo,
+            saldo_esperado: esperado,
+            saldo_atual: saldoActual,
+            diferenca: diff,
+            id_movimento: all[i].id,
+          });
+        }
+      }
+    }
+    grandBad += badCount;
+    if (badCount > 0) grandContasComErro++;
+    const totalChecked = all.length - firstChecked;
+
+    // 4. Render
+    const pctOK = totalChecked > 0 ? Math.round(100 * (totalChecked - badCount) / totalChecked) : 100;
+    html += `<div class="info">📋 <strong>${cid}</strong></div>`;
+    html += `<div class="muted">  Verificados: ${totalChecked} mov desde ${fromDate}`;
+    if (ancoraInfo) {
+      html += ` · Âncora: ${ancoraInfo.data} saldo=${fmt(ancoraSaldo)}`;
+    } else {
+      html += ` · <span class="warn">Sem âncora antes de ${fromDate}</span>`;
+    }
+    html += `</div>`;
+    if (badCount === 0) {
+      html += `<div class="ok">  ✅ Todos coerentes (${pctOK}% OK)</div><br>`;
+    } else {
+      html += `<div class="err">  ⚠️ ${badCount} linhas com erro · ${pctOK}% coerentes</div>`;
+      // Tabela com badRows
+      html += '<div style="margin:6px 0 14px 0;background:#0f0f1a;border-radius:6px;padding:8px;overflow-x:auto"><table><thead><tr>'
+            + '<th>#</th><th>data</th><th>descrição</th>'
+            + '<th class="num">valor</th>'
+            + '<th class="num">saldo ant.</th>'
+            + '<th class="num">esperado</th>'
+            + '<th class="num">atual</th>'
+            + '<th class="num">diferença</th>'
+            + '</tr></thead><tbody>';
+      const showRows = onlyBad ? badRows : badRows.slice(0, 20); // se "onlyBad" desligado, ainda mostra todas as erradas
+      showRows.forEach(b => {
+        const v = parseFloat(b.mov.valor) || 0;
+        const s = parseFloat(b.mov.saldo) || 0;
+        const valorClass = v >= 0 ? 'ok' : 'err';
+        const diffClass = b.diff >= 0 ? 'ok' : 'err';
+        html += `<tr class="bad"><td>${b.idx}</td><td>${b.mov.data}</td><td>${(b.mov.movimento||'').substring(0,45)}</td>`
+              + `<td class="num ${valorClass}">${v>=0?'+':''}${fmt(v)}</td>`
+              + `<td class="num">${fmt(b.prevSaldo)}</td>`
+              + `<td class="num">${fmt(b.esperado)}</td>`
+              + `<td class="num">${fmt(s)}</td>`
+              + `<td class="num ${diffClass}"><strong>${b.diff>=0?'+':''}${fmt(b.diff)}</strong></td>`
+              + `</tr>`;
+      });
+      if (badCount > badRows.length) {
+        html += `<tr><td colspan="8" class="muted">...mais ${badCount - badRows.length} linhas (aumenta "Máx por conta" para ver mais)</td></tr>`;
+      }
+      html += '</tbody></table></div>';
+    }
+    log.innerHTML = html;
+  }
+
+  // Resumo
+  html += `<div class="info">═══════════════════════════════════════════</div>`;
+  html += `<div class="info"><strong>RESUMO</strong> · desde ${fromDate}</div>`;
+  html += `<div>  Contas verificadas: <strong>${grandContas}</strong></div>`;
+  html += `<div>  Movimentos verificados: <strong>${grandTotalChecked}</strong></div>`;
+  html += `<div>  Linhas com erro: <span class="${grandBad>0?'err':'ok'}">${grandBad}</span></div>`;
+  html += `<div>  Contas com erro: <span class="${grandContasComErro>0?'warn':'ok'}">${grandContasComErro}</span> / ${grandContas}</div>`;
+  if (grandBad > 0) {
+    html += `<div class="muted" style="margin-top:8px">💡 Carrega em "Exportar CSV" para teres todos os erros em ficheiro.</div>`;
+  }
+  log.innerHTML = html;
+}
+
+function exportCSV() {
+  if (!lastBadRows || lastBadRows.length === 0) {
+    alert("Sem linhas para exportar. Corre primeiro a verificação.");
+    return;
+  }
+  const headers = ["conta_id","data","descrição","valor","saldo_anterior","saldo_esperado","saldo_atual","diferença","id_movimento"];
+  const escape = (v) => {
+    const s = v == null ? '' : String(v);
+    if (s.includes(',') || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  };
+  const csv = [headers.join(",")]
+    .concat(lastBadRows.map(r => [
+      r.conta_id, r.data, r.descricao, r.valor, r.saldo_anterior, r.saldo_esperado, r.saldo_atual, r.diferenca, r.id_movimento
+    ].map(escape).join(",")))
+    .join("\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `check-saldos_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+</script>
+</body>
+</html>

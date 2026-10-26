@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head><title>Migração — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:800px;margin:0 auto}
+  h1{color:#C8A96E}
+  button{background:#C8A96E;border:none;padding:14px 28px;font-size:16px;cursor:pointer;border-radius:8px;font-weight:bold;margin:10px 0}
+  button:disabled{opacity:0.5;cursor:default}
+  #log{background:#1a1a2e;padding:20px;border-radius:8px;height:400px;overflow-y:auto;margin-top:20px;font-size:12px;line-height:1.8}
+  .ok{color:#16a34a}.err{color:#dc2626}.info{color:#C8A96E}
+</style>
+</head>
+<body>
+<h1>🔄 Migração de Movimentos → Supabase</h1>
+<p>Carrega os 8.513 movimentos para o Supabase. Corre apenas uma vez.</p>
+<button id="btn" onclick="runMigration()">▶ Iniciar Migração</button>
+<div id="log"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+function log(msg, cls='info') {
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="${cls}">${new Date().toLocaleTimeString()} — ${msg}</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+async function runMigration() {
+  const btn = document.getElementById('btn');
+  btn.disabled = true;
+  log('A fazer login...');
+
+  const pwd = prompt('Palavra-passe do felipe@riocapital.pt:');
+  if (!pwd) { btn.disabled = false; return; }
+
+  const { error: authErr } = await client.auth.signInWithPassword({
+    email: 'felipe@riocapital.pt', password: pwd
+  });
+  if (authErr) { log('❌ Erro de login: ' + authErr.message, 'err'); btn.disabled = false; return; }
+  log('✅ Login OK', 'ok');
+
+  log('A carregar caixa_unico_v2.json...');
+  const resp = await fetch('/caixa_unico_v2.json');
+  const data = await resp.json();
+
+  // Build records
+  const records = [];
+  for (const [empresa_id, contas] of Object.entries(data)) {
+    for (const conta of contas) {
+      for (const m of (conta.movimentos || [])) {
+        records.push({
+          conta_id: conta.conta_id,
+          empresa_id,
+          banco: conta.banco,
+          data: m.data,
+          movimento: m.movimento,
+          valor: m.valor,
+          saldo: m.saldo || 0,
+          categoria: m.categoria || '',
+          detalhes: m.detalhes || '',
+        });
+      }
+    }
+  }
+
+  log(`📦 ${records.length} movimentos. A inserir em lotes de 100...`, 'info');
+
+  const CHUNK = 100;
+  let inserted = 0;
+  let skipped = 0;
+  let errors = 0;
+
+  for (let i = 0; i < records.length; i += CHUNK) {
+    const chunk = records.slice(i, i + CHUNK);
+    // Use insert with ignoreDuplicates instead of upsert
+    const { data: result, error } = await client
+      .from('movimentos')
+      .insert(chunk, { ignoreDuplicates: true });
+
+    if (error) {
+      // If duplicate key error, skip silently
+      if (error.message.includes('duplicate') || error.message.includes('unique')) {
+        skipped += chunk.length;
+        log(`⏭ Lote ${Math.floor(i/CHUNK)+1} — duplicados ignorados`, 'info');
+      } else {
+        log(`❌ Lote ${Math.floor(i/CHUNK)+1}: ${error.message}`, 'err');
+        errors++;
+      }
+    } else {
+      inserted += chunk.length;
+      const pct = Math.round(((i + chunk.length) / records.length) * 100);
+      log(`✅ Lote ${Math.floor(i/CHUNK)+1}/${Math.ceil(records.length/CHUNK)} — ${pct}% (${inserted} inseridos)`, 'ok');
+    }
+    await new Promise(r => setTimeout(r, 150));
+  }
+
+  const cls = errors > 0 ? 'err' : 'ok';
+  log(`🎉 CONCLUÍDO: ${inserted} inseridos, ${skipped} duplicados ignorados, ${errors} erros`, cls);
+  btn.disabled = false;
+}
+</script>
+</body>
+</html>

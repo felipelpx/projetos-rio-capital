@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+<head><title>Diagnóstico Pagamentos — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:1300px;margin:0 auto}
+  h1{color:#C8A96E}
+  h2{color:#C8A96E;border-bottom:1px solid #333;padding-bottom:6px;margin-top:28px}
+  button{background:#C8A96E;border:none;padding:11px 22px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px}
+  .desc{background:#1a1a2e;padding:14px;border-radius:8px;border-left:4px solid #C8A96E;margin:12px 0;font-size:12px;line-height:1.6}
+  #log{background:#1a1a2e;padding:18px;border-radius:8px;max-height:700px;overflow-y:auto;margin-top:18px;font-size:11px;line-height:1.55}
+  table{width:100%;border-collapse:collapse;font-size:11px;margin:8px 0}
+  th,td{padding:5px 8px;border-bottom:1px solid #2a2a3e;text-align:left}
+  th{color:#C8A96E;background:#1a1a2e;position:sticky;top:0}
+  .ok{color:#16a34a}.err{color:#dc2626}.info{color:#C8A96E}.warn{color:#f59e0b}.muted{color:#888}
+  .num{text-align:right;font-family:monospace}
+  .pill{display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;background:#2a2a3e}
+</style>
+</head>
+<body>
+<h1>🔍 Diagnóstico — pagamentos_extras e faturas</h1>
+
+<div class="desc">
+  Esta página lê <strong>tudo</strong> o que existe no Supabase nas tabelas <code>pagamentos_extras</code> e <code>faturas</code>, agrupa por dia de criação, e mostra os totais. Útil para perceber se os dados estão lá mas só não aparecem na app, ou se realmente desapareceram.
+</div>
+
+<button onclick="diagnosticar()">▶ Diagnosticar</button>
+
+<div id="log"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let authed = false;
+async function ensureAuth() {
+  if (authed) return true;
+  const pwd = prompt('Palavra-passe do felipe@riocapital.pt:');
+  if (!pwd) return false;
+  const { error } = await client.auth.signInWithPassword({ email: 'felipe@riocapital.pt', password: pwd });
+  if (error) { alert('Login falhou: ' + error.message); return false; }
+  authed = true;
+  return true;
+}
+
+async function diagnosticar() {
+  if (!await ensureAuth()) return;
+  const log = document.getElementById('log');
+  log.innerHTML = '<div class="info">A carregar...</div>';
+  let html = '';
+
+  // PAGAMENTOS_EXTRAS
+  html += '<h2>📋 pagamentos_extras</h2>';
+  let pagamentos = [], offset = 0;
+  while (true) {
+    const { data, error } = await client.from('pagamentos_extras').select('*').range(offset, offset + 999);
+    if (error) { html += `<div class="err">Erro: ${error.message}</div>`; break; }
+    if (!data?.length) break;
+    pagamentos = pagamentos.concat(data);
+    if (data.length < 1000) break;
+    offset += 1000;
+  }
+  html += `<div>Total: <strong>${pagamentos.length}</strong> registos</div>`;
+
+  if (pagamentos.length > 0) {
+    // Agrupar por dia (created_at se existir, senão data_inicio)
+    const byDay = {};
+    pagamentos.forEach(p => {
+      // Se tiver created_at usa, senão usa data_inicio
+      const ts = p.created_at || p.data_inicio || 'sem data';
+      const day = ts.substring(0, 10);
+      if (!byDay[day]) byDay[day] = [];
+      byDay[day].push(p);
+    });
+    const days = Object.keys(byDay).sort();
+    html += '<div style="margin:10px 0"><strong>Distribuição por dia de criação (ou data_inicio se não houver created_at):</strong></div>';
+    html += '<table><thead><tr><th>dia</th><th class="num">qtd</th><th class="num">total saídas</th><th class="num">total entradas</th></tr></thead><tbody>';
+    days.forEach(d => {
+      const items = byDay[d];
+      const saidas = items.filter(p => p.tipo === 'saida').reduce((s,p)=>s+(parseFloat(p.valor)||0),0);
+      const entradas = items.filter(p => p.tipo === 'entrada').reduce((s,p)=>s+(parseFloat(p.valor)||0),0);
+      html += `<tr><td>${d}</td><td class="num">${items.length}</td><td class="num err">${saidas.toLocaleString('pt-PT',{minimumFractionDigits:2})}</td><td class="num ok">${entradas.toLocaleString('pt-PT',{minimumFractionDigits:2})}</td></tr>`;
+    });
+    html += '</tbody></table>';
+
+    // Status breakdown
+    const byStatus = {};
+    pagamentos.forEach(p => {
+      const s = p.status || '(null)';
+      byStatus[s] = (byStatus[s] || 0) + 1;
+    });
+    html += '<div style="margin:10px 0"><strong>Por status:</strong> ';
+    Object.entries(byStatus).forEach(([s, c]) => {
+      html += `<span class="pill">${s}: ${c}</span> `;
+    });
+    html += '</div>';
+
+    // Mostrar os 20 mais recentes
+    pagamentos.sort((a,b) => (b.created_at || b.data_inicio || '').localeCompare(a.created_at || a.data_inicio || ''));
+    html += '<div style="margin:10px 0"><strong>20 mais recentes:</strong></div>';
+    html += '<table><thead><tr><th>created_at</th><th>data_inicio</th><th>tipo</th><th>empresa</th><th>descrição</th><th class="num">valor</th><th>status</th></tr></thead><tbody>';
+    pagamentos.slice(0, 20).forEach(p => {
+      html += `<tr><td class="muted">${(p.created_at||'').substring(0,19)}</td><td>${p.data_inicio||''}</td><td>${p.tipo||''}</td><td>${p.empresa||''}</td><td>${(p.descricao||'').substring(0,40)}</td><td class="num">${(p.valor||0).toLocaleString('pt-PT',{minimumFractionDigits:2})}</td><td class="muted">${p.status||'(null)'}</td></tr>`;
+    });
+    html += '</tbody></table>';
+  }
+
+  // FATURAS
+  html += '<h2>🧾 faturas</h2>';
+  let faturas = []; offset = 0;
+  while (true) {
+    const { data, error } = await client.from('faturas').select('*').range(offset, offset + 999);
+    if (error) { html += `<div class="err">Erro: ${error.message}</div>`; break; }
+    if (!data?.length) break;
+    faturas = faturas.concat(data);
+    if (data.length < 1000) break;
+    offset += 1000;
+  }
+  html += `<div>Total: <strong>${faturas.length}</strong> registos</div>`;
+
+  if (faturas.length > 0) {
+    const byDay = {};
+    faturas.forEach(f => {
+      const ts = f.created_at || f.vencimento || 'sem data';
+      const day = ts.substring(0, 10);
+      if (!byDay[day]) byDay[day] = [];
+      byDay[day].push(f);
+    });
+    const days = Object.keys(byDay).sort();
+    html += '<div style="margin:10px 0"><strong>Distribuição por dia de criação (ou vencimento):</strong></div>';
+    html += '<table><thead><tr><th>dia</th><th class="num">qtd</th><th class="num">total</th></tr></thead><tbody>';
+    days.forEach(d => {
+      const items = byDay[d];
+      const total = items.reduce((s,f)=>s+(parseFloat(f.valor)||0),0);
+      html += `<tr><td>${d}</td><td class="num">${items.length}</td><td class="num">${total.toLocaleString('pt-PT',{minimumFractionDigits:2})}</td></tr>`;
+    });
+    html += '</tbody></table>';
+
+    // 20 mais recentes
+    faturas.sort((a,b) => (b.created_at || b.vencimento || '').localeCompare(a.created_at || a.vencimento || ''));
+    html += '<div style="margin:10px 0"><strong>20 mais recentes:</strong></div>';
+    html += '<table><thead><tr><th>created_at</th><th>vencimento</th><th>empresa</th><th>fornecedor</th><th class="num">valor</th><th>status</th></tr></thead><tbody>';
+    faturas.slice(0, 20).forEach(f => {
+      html += `<tr><td class="muted">${(f.created_at||'').substring(0,19)}</td><td>${f.vencimento||''}</td><td>${f.empresa||''}</td><td>${(f.fornecedor||'').substring(0,30)}</td><td class="num">${(f.valor||0).toLocaleString('pt-PT',{minimumFractionDigits:2})}</td><td class="muted">${f.status||'(null)'}</td></tr>`;
+    });
+    html += '</tbody></table>';
+  }
+
+  // Resumo
+  html += '<h2>📊 Resumo</h2>';
+  html += `<div>pagamentos_extras: <strong>${pagamentos.length}</strong></div>`;
+  html += `<div>faturas: <strong>${faturas.length}</strong></div>`;
+  html += `<div class="muted" style="margin-top:8px">Se vires registos aqui mas não na app → é problema de filtro/UI. Se a tabela estiver vazia → os dados não estão no Supabase.</div>`;
+
+  log.innerHTML = html;
+}
+</script>
+</body>
+</html>

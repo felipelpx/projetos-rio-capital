@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html>
+<head><title>Reparar Linhas Manuais — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:1200px;margin:0 auto}
+  h1{color:#C8A96E}
+  button{background:#C8A96E;border:none;padding:11px 22px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px}
+  button:disabled{opacity:0.5}
+  button.danger{background:#dc2626;color:#fff}
+  select,input{background:#1a1a2e;color:#fff;border:1px solid #444;padding:8px;border-radius:6px;font-family:monospace;font-size:13px;margin:5px}
+  .desc{background:#1a1a2e;padding:14px;border-radius:8px;border-left:4px solid #C8A96E;margin:12px 0;font-size:12px;line-height:1.6}
+  #log{background:#1a1a2e;padding:18px;border-radius:8px;max-height:600px;overflow-y:auto;margin-top:18px;font-size:11px;line-height:1.55}
+  table{width:100%;border-collapse:collapse;font-size:11px}
+  th,td{padding:5px 8px;border-bottom:1px solid #2a2a3e;text-align:left}
+  th{color:#C8A96E;background:#1a1a2e;position:sticky;top:0}
+  .ok{color:#16a34a}.err{color:#dc2626}.info{color:#C8A96E}.warn{color:#f59e0b}.muted{color:#888}
+  .num{text-align:right;font-family:monospace}
+</style>
+</head>
+<body>
+<h1>🔧 Reparar Linhas Manuais sem <code>seq</code></h1>
+
+<div class="desc">
+  Identifica movimentos com <code>seq = NULL</code> em todas as contas (que existem na BD mas não aparecem ordenados no extrato), e atribui um <code>seq</code> alto para que apareçam como mais recentes.<br><br>
+  <strong>Fluxo:</strong> "Verificar" → vê quais são → "Aplicar" para os pôr no topo da lista cronológica.
+</div>
+
+<button onclick="verificar()">🔍 Verificar quais têm seq=NULL</button>
+<button onclick="aplicar()" class="danger">⚡ Atribuir seq alto a todos</button>
+
+<div id="log"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let authed = false;
+async function ensureAuth() {
+  if (authed) return true;
+  const pwd = prompt('Palavra-passe do felipe@riocapital.pt:');
+  if (!pwd) return false;
+  const { error } = await client.auth.signInWithPassword({ email: 'felipe@riocapital.pt', password: pwd });
+  if (error) { alert('Login falhou: ' + error.message); return false; }
+  authed = true;
+  return true;
+}
+
+const fmt = (v) => new Intl.NumberFormat('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v || 0);
+
+let semSeqGlobal = [];
+
+async function verificar() {
+  if (!await ensureAuth()) return;
+  const log = document.getElementById('log');
+  log.innerHTML = '<div class="info">A procurar movimentos com seq=NULL...</div>';
+
+  // Paginar todos os movimentos com seq IS NULL
+  let all = [], from = 0;
+  while (true) {
+    const { data, error } = await client.from('movimentos')
+      .select('id, conta_id, data, movimento, valor, saldo, seq')
+      .is('seq', null)
+      .range(from, from + 999);
+    if (error) {
+      log.innerHTML += `<div class="err">Erro: ${error.message}</div>`;
+      break;
+    }
+    if (!data?.length) break;
+    all = all.concat(data);
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+
+  semSeqGlobal = all;
+
+  if (all.length === 0) {
+    log.innerHTML = '<div class="ok">✅ Nenhum movimento com seq=NULL. Está tudo ordenado.</div>';
+    return;
+  }
+
+  // Agrupar por conta_id
+  const porConta = {};
+  for (const m of all) {
+    if (!porConta[m.conta_id]) porConta[m.conta_id] = [];
+    porConta[m.conta_id].push(m);
+  }
+
+  let html = `<div class="warn"><strong>Total: ${all.length} movimentos sem seq</strong> em ${Object.keys(porConta).length} contas:</div>`;
+
+  for (const [cid, movs] of Object.entries(porConta)) {
+    html += `<div class="info" style="margin-top:14px"><strong>📋 ${cid}</strong> (${movs.length} linhas)</div>`;
+    html += '<table><thead><tr><th>data</th><th>descrição</th><th class="num">valor</th><th class="num">saldo</th><th class="muted">id</th></tr></thead><tbody>';
+    movs.slice(0, 15).forEach(m => {
+      html += `<tr><td>${m.data}</td><td>${(m.movimento||'').substring(0,45)}</td><td class="num ${m.valor >= 0 ? 'ok':'err'}">${fmt(m.valor)}</td><td class="num">${fmt(m.saldo)}</td><td class="muted" style="font-size:9px">${m.id}</td></tr>`;
+    });
+    if (movs.length > 15) html += `<tr><td colspan="5" class="muted">...mais ${movs.length - 15} linhas</td></tr>`;
+    html += '</tbody></table>';
+  }
+
+  log.innerHTML = html;
+}
+
+async function aplicar() {
+  if (!await ensureAuth()) return;
+  if (semSeqGlobal.length === 0) {
+    if (!confirm('Não há nada em memória. Quer fazer Verificar primeiro?')) return;
+    await verificar();
+    if (semSeqGlobal.length === 0) return;
+  }
+
+  if (!confirm(`Vai atribuir um seq alto a ${semSeqGlobal.length} movimentos.\n\nIsto fá-los aparecer no topo do extrato (como mais recentes). Continuar?`)) return;
+
+  const log = document.getElementById('log');
+  log.innerHTML = '<div class="info">A aplicar...</div>';
+
+  // Para cada conta, pegar o max(seq) atual e atribuir incrementalmente
+  const porConta = {};
+  for (const m of semSeqGlobal) {
+    if (!porConta[m.conta_id]) porConta[m.conta_id] = [];
+    porConta[m.conta_id].push(m);
+  }
+
+  let totalOk = 0, totalErr = 0;
+  let html = '';
+
+  for (const [cid, movs] of Object.entries(porConta)) {
+    const { data: maxRow } = await client.from('movimentos')
+      .select('seq').eq('conta_id', cid).not('seq', 'is', null)
+      .order('seq', { ascending: false }).limit(1);
+    let nextSeq = (maxRow?.[0]?.seq || 0) + 1;
+
+    // Ordenar por data ASC para que as mais antigas recebam seq menor (mas todos altos)
+    movs.sort((a, b) => (a.data || '').localeCompare(b.data || ''));
+
+    let ok = 0, err = 0;
+    for (let i = 0; i < movs.length; i += 50) {
+      const chunk = movs.slice(i, i + 50);
+      const results = await Promise.all(chunk.map((m, idx) =>
+        client.from('movimentos').update({ seq: nextSeq + i + idx }).eq('id', m.id)
+      ));
+      results.forEach(r => { if (r.error) { err++; console.error(r.error); } else ok++; });
+    }
+    totalOk += ok; totalErr += err;
+    html += `<div class="${err ? 'warn' : 'ok'}">  ${cid}: ${ok}/${movs.length} atualizados${err ? ` (${err} erros)` : ''}</div>`;
+    log.innerHTML = html;
+  }
+
+  html += `<br><div class="info">═══════════════════════════</div>`;
+  html += `<div class="${totalErr ? 'warn' : 'ok'}"><strong>Total: ${totalOk}/${semSeqGlobal.length} atualizados${totalErr ? ` (${totalErr} erros)` : ''}</strong></div>`;
+  html += `<div class="muted" style="margin-top:8px">Atualiza a app para ver os movimentos no topo da lista.</div>`;
+  log.innerHTML = html;
+  semSeqGlobal = [];
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head><title>Backfill SEQ — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:900px;margin:0 auto}
+  h1{color:#C8A96E}
+  button{background:#C8A96E;border:none;padding:14px 28px;font-size:16px;cursor:pointer;border-radius:8px;font-weight:bold;margin:10px 0}
+  button:disabled{opacity:0.5;cursor:default}
+  #log{background:#1a1a2e;padding:20px;border-radius:8px;height:500px;overflow-y:auto;margin-top:20px;font-size:12px;line-height:1.7}
+  .ok{color:#16a34a}.err{color:#dc2626}.info{color:#C8A96E}.warn{color:#f59e0b}
+  .desc{background:#1a1a2e;padding:18px;border-radius:8px;border-left:4px solid #C8A96E;margin:14px 0;font-size:13px;line-height:1.6}
+</style>
+</head>
+<body>
+<h1>🔢 Backfill SEQ — Movimentos sem ordem</h1>
+
+<div class="desc">
+  <strong>O que isto faz:</strong> percorre todos os movimentos no Supabase que têm <code>seq IS NULL</code>
+  (vieram da migração inicial sem ordem) e atribui-lhes um valor de <code>seq</code> baseado na <strong>posição original no caixa_unico_v2.json</strong>
+  (que é a ordem do Excel original: linha 0 = mais recente).<br><br>
+  <strong>Resultado:</strong> a tabela Extrato passa a mostrar os movimentos pela ordem certa, com os imports recentes sempre no topo.
+  Corre uma vez. É idempotente — se voltar a correr, só preenche o que ainda estiver NULL.
+</div>
+
+<button id="btn" onclick="run()">▶ Iniciar Backfill</button>
+<button id="dry" onclick="run(true)" style="background:#666">🔍 Dry-run (só conta)</button>
+<div id="log"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+function log(msg, cls='info') {
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="${cls}">${new Date().toLocaleTimeString()} — ${msg}</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+const norm = (v) => (v == null ? '' : String(v));
+const k = (m) => `${norm(m.data)}_${norm(m.movimento)}_${norm(m.valor)}_${norm(m.saldo)}`;
+
+async function run(dryRun = false) {
+  const btnRun = document.getElementById('btn');
+  const btnDry = document.getElementById('dry');
+  btnRun.disabled = true; btnDry.disabled = true;
+
+  try {
+    log('A fazer login...');
+    const pwd = prompt('Palavra-passe do felipe@riocapital.pt:');
+    if (!pwd) { btnRun.disabled = false; btnDry.disabled = false; return; }
+
+    const { error: authErr } = await client.auth.signInWithPassword({
+      email: 'felipe@riocapital.pt', password: pwd
+    });
+    if (authErr) { log('❌ Login: ' + authErr.message, 'err'); btnRun.disabled = false; btnDry.disabled = false; return; }
+    log('✅ Login OK', 'ok');
+
+    log('A carregar /caixa_unico_v2.json...');
+    const resp = await fetch('/caixa_unico_v2.json');
+    const snapshot = await resp.json();
+
+    // Build a map: conta_id → { posByKey: Map, total: N }
+    // Position 0 in JSON = most recent (Excel row 0) → gets highest seq
+    const posByConta = {};
+    for (const [empresa_id, contas] of Object.entries(snapshot)) {
+      for (const conta of contas) {
+        const posByKey = new Map();
+        const movs = conta.movimentos || [];
+        movs.forEach((m, idx) => posByKey.set(k(m), idx));
+        posByConta[conta.conta_id] = { posByKey, total: movs.length };
+      }
+    }
+    log(`📚 Snapshot carregado: ${Object.keys(posByConta).length} contas.`, 'info');
+
+    // Pull all movimentos with seq IS NULL, in batches
+    log('A buscar movimentos com seq=NULL no Supabase...');
+    let allNull = [], offset = 0;
+    while (true) {
+      const { data, error } = await client
+        .from('movimentos')
+        .select('id, conta_id, data, movimento, valor, saldo')
+        .is('seq', null)
+        .range(offset, offset + 999);
+      if (error) { log('❌ Select: ' + error.message, 'err'); return; }
+      if (!data?.length) break;
+      allNull = allNull.concat(data);
+      log(`  + ${data.length} (total: ${allNull.length})`);
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+    log(`📦 ${allNull.length} movimentos com seq=NULL.`, 'info');
+
+    if (allNull.length === 0) { log('🎉 Nada para fazer.', 'ok'); btnRun.disabled = false; btnDry.disabled = false; return; }
+
+    // Group by conta + assign seq:
+    // seq for row at JSON position `idx` (of total N) = N - idx
+    // → row 0 (most recent) gets seq = N (highest), row N-1 gets seq = 1
+    const byConta = {};
+    for (const m of allNull) {
+      if (!byConta[m.conta_id]) byConta[m.conta_id] = [];
+      byConta[m.conta_id].push(m);
+    }
+
+    let toUpdate = [];
+    let unmatched = 0;
+    let unknownConta = 0;
+    for (const [contaId, movs] of Object.entries(byConta)) {
+      const info = posByConta[contaId];
+      if (!info) {
+        log(`  ⚠️ Conta ${contaId} não está no snapshot — ignoro ${movs.length} movimentos`, 'warn');
+        unknownConta += movs.length;
+        continue;
+      }
+      const N = info.total;
+      for (const m of movs) {
+        const key = k({ data: m.data, movimento: m.movimento, valor: m.valor, saldo: m.saldo });
+        const idx = info.posByKey.get(key);
+        if (idx === undefined) {
+          unmatched++;
+          continue;
+        }
+        const seq = N - idx; // idx=0 (most recent) → seq=N (highest)
+        toUpdate.push({ id: m.id, seq });
+      }
+    }
+    log(`🧮 ${toUpdate.length} movimentos com match para atribuir seq.`, 'info');
+    if (unmatched > 0) log(`  ⚠️ ${unmatched} não tiveram match no snapshot`, 'warn');
+    if (unknownConta > 0) log(`  ⚠️ ${unknownConta} de contas desconhecidas`, 'warn');
+
+    if (dryRun) { log('🔍 Dry-run: nada foi escrito.', 'info'); btnRun.disabled = false; btnDry.disabled = false; return; }
+
+    log('A escrever updates em lotes de 100...');
+    let updated = 0;
+    let errors = 0;
+    for (let i = 0; i < toUpdate.length; i += 100) {
+      const chunk = toUpdate.slice(i, i + 100);
+      // Run in parallel (small batch)
+      const results = await Promise.all(chunk.map(u =>
+        client.from('movimentos').update({ seq: u.seq }).eq('id', u.id)
+      ));
+      const chunkErrors = results.filter(r => r.error);
+      if (chunkErrors.length > 0) {
+        errors += chunkErrors.length;
+        log(`  ❌ ${chunkErrors.length} erros no lote (${chunkErrors[0].error.message})`, 'err');
+      }
+      updated += chunk.length - chunkErrors.length;
+      const pct = Math.round((i + chunk.length) / toUpdate.length * 100);
+      log(`  ✅ ${updated}/${toUpdate.length} (${pct}%)`, 'ok');
+      await new Promise(r => setTimeout(r, 80));
+    }
+    log(`🎉 CONCLUÍDO: ${updated} atualizados, ${errors} erros, ${unmatched} sem match, ${unknownConta} contas desconhecidas.`,
+        errors > 0 ? 'err' : 'ok');
+  } catch (e) {
+    log('❌ Exceção: ' + e.message, 'err');
+    console.error(e);
+  } finally {
+    btnRun.disabled = false; btnDry.disabled = false;
+  }
+}
+</script>
+</body>
+</html>

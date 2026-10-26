@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head><title>Setup aprovação item a item — Rio Capital ERP</title>
+<meta charset="utf-8"/>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:900px;margin:0 auto;line-height:1.6}
+  h1{color:#C8A96E}
+  pre{background:#1a1a2e;padding:18px;border-radius:8px;overflow-x:auto;border-left:4px solid #C8A96E;font-size:13px;white-space:pre-wrap;word-break:break-word}
+  .step{background:#1a1a2e;padding:18px;border-radius:8px;margin:14px 0}
+  .step-num{display:inline-block;background:#C8A96E;color:#0f0f1a;border-radius:50%;width:28px;height:28px;text-align:center;line-height:28px;font-weight:bold;margin-right:8px}
+  a{color:#C8A96E}
+</style>
+</head>
+<body>
+<h1>✓ Setup — aprovar cada pagamento individualmente</h1>
+
+<p>Para se poder aprovar ou recusar <strong>cada pagamento do mapa por si</strong>, a tabela <code>mapas_pagamento_itens</code> precisa de guardar a decisão de cada linha: quem aprovou, em que nível e quando. Corre o SQL abaixo uma única vez.</p>
+
+<div class="step">
+  <h3><span class="step-num">1</span>Abre o SQL Editor do Supabase</h3>
+  <p>Vai a <a href="https://supabase.com/dashboard/project/esymjdrvcpwsoevnqljq/sql/new" target="_blank">Supabase SQL Editor</a> e cola o SQL abaixo.</p>
+</div>
+
+<div class="step">
+  <h3><span class="step-num">2</span>Corre o SQL</h3>
+<pre>-- Decisão de cada item do mapa, por nível de aprovação
+alter table mapas_pagamento_itens
+  add column if not exists aprovado_n1     boolean not null default false,
+  add column if not exists aprovado_n1_por uuid,
+  add column if not exists aprovado_n1_em  timestamptz,
+  add column if not exists aprovado_n2     boolean not null default false,
+  add column if not exists aprovado_n2_por uuid,
+  add column if not exists aprovado_n2_em  timestamptz,
+  add column if not exists recusado        boolean not null default false,
+  add column if not exists recusado_por    uuid,
+  add column if not exists recusado_em     timestamptz;
+
+create index if not exists idx_mpi_decisao on mapas_pagamento_itens(mapa_id, recusado);
+
+-- Mapas já aprovados ficam com todos os itens marcados como aprovados, para o
+-- histórico não aparecer como "por decidir".
+update mapas_pagamento_itens i
+   set aprovado_n1 = true, aprovado_n2 = true
+  from mapas_pagamento m
+ where i.mapa_id = m.id
+   and m.status = 'aprovado'
+   and (i.aprovado_n1 = false or i.aprovado_n2 = false);
+
+-- Mapas já em Pendente N2 têm o nível 1 dado como aprovado.
+update mapas_pagamento_itens i
+   set aprovado_n1 = true
+  from mapas_pagamento m
+ where i.mapa_id = m.id
+   and m.status = 'pendente_nivel_2'
+   and i.aprovado_n1 = false;
+
+notify pgrst, 'reload schema';</pre>
+</div>
+
+<div class="step">
+  <h3><span class="step-num">3</span>Confirma</h3>
+  <p>Abre o ERP → <strong>Pagamentos</strong> → um mapa por aprovar. Cada linha passa a ter os botões <strong>✓</strong> e <strong>✕</strong> na coluna <strong>Decisão</strong>, e o botão de fechar o nível só fica ativo quando não sobrar nenhum por decidir.</p>
+</div>
+
+<p style="color:#888;font-size:12px">As duas instruções <code>update</code> no fim são para o histórico: sem elas, os mapas que já estavam aprovados apareceriam com todos os itens "por decidir". Correr o SQL outra vez não faz mal.</p>
+</body>
+</html>

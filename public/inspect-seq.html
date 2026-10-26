@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html>
+<head><title>Inspecionar SEQ — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:1100px;margin:0 auto}
+  h1{color:#C8A96E}
+  button{background:#C8A96E;border:none;padding:10px 20px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px}
+  button:disabled{opacity:0.5;cursor:default}
+  select,input{background:#1a1a2e;color:#fff;border:1px solid #444;padding:8px;border-radius:6px;font-family:monospace;font-size:13px;margin:5px}
+  #log{background:#1a1a2e;padding:18px;border-radius:8px;height:520px;overflow-y:auto;margin-top:18px;font-size:11px;line-height:1.6}
+  table{width:100%;border-collapse:collapse;font-size:11px}
+  th,td{padding:5px 8px;border-bottom:1px solid #2a2a3e;text-align:left}
+  th{color:#C8A96E;position:sticky;top:0;background:#1a1a2e}
+  .ok{color:#16a34a}.err{color:#dc2626}.info{color:#C8A96E}.warn{color:#f59e0b}
+  .desc{background:#1a1a2e;padding:14px;border-radius:8px;border-left:4px solid #C8A96E;margin:12px 0;font-size:12px;line-height:1.6}
+</style>
+</head>
+<body>
+<h1>🔍 Inspecionar SEQ de uma conta</h1>
+
+<div class="desc">
+  Mostra os movimentos de uma conta tal como vêm do Supabase ordenados por <code>seq DESC NULLS LAST, data DESC</code>.
+  Use para perceber se há colisões, NULLs, ou ordem errada.
+</div>
+
+<select id="conta">
+  <option value="">Escolhe uma conta…</option>
+  <option value="riocap_bcp">Rio Capital · BCP</option>
+  <option value="classic_bni">Classic Revelation · BNI</option>
+  <option value="riocap_cartão_7449">Rio Capital · Cartão 7449</option>
+  <option value="riocap_caixa_livre">Rio Capital · Caixa Livre</option>
+  <option value="decadex_bcp">Decadexperience · BCP</option>
+  <option value="visionary_banco_invest">Visionary · Banco Invest</option>
+  <option value="barramansa_banco_invest">Barra Mansa · Banco Invest</option>
+  <option value="barramansa_miami_eua">Barra Mansa · Miami/EUA</option>
+  <option value="barramansa_revolut">Barra Mansa · Revolut</option>
+  <option value="barramansa_bb_americas">Barra Mansa · BB Americas</option>
+  <option value="curious_bcp">Curious · BCP</option>
+  <option value="modernity_bcp">Modernity · BCP</option>
+  <option value="wodelay_bcp">Without Delays · BCP</option>
+  <option value="nimitz_banco_atlântico">Nimitz · Banco Atlântico</option>
+  <option value="nimitz_revolut">Nimitz · Revolut</option>
+  <option value="nimitz_miami_eua">Nimitz · Miami/EUA</option>
+  <option value="shadow_bcp">Alternative Shadow · BCP</option>
+  <option value="zuka_banco_atlântico">ZUKA · Banco Atlântico</option>
+  <option value="enigma_bcp">Enigma · BCP</option>
+</select>
+<input id="limit" type="number" value="30" min="5" max="500" style="width:80px">
+<button onclick="run()">▶ Inspecionar</button>
+<button onclick="stats()">📊 Estatísticas globais</button>
+<button onclick="findDups()" style="background:#dc2626">🔁 Procurar duplicados</button>
+<input id="search" type="text" placeholder="texto na descrição..." style="width:200px">
+<input id="dateSearch" type="text" placeholder="data YYYY-MM-DD" style="width:140px">
+<button onclick="searchDesc()">🔍 Filtrar</button>
+<button onclick="findExtras()" style="background:#7c3aed">⚠️ Movimentos sem snapshot</button>
+<button onclick="fixExtras()" style="background:#16a34a">🔧 Corrigir seq dos extras</button>
+
+<div id="log"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+function logHtml(html) {
+  document.getElementById('log').innerHTML = html;
+}
+
+let authed = false;
+async function ensureAuth() {
+  if (authed) return true;
+  const pwd = prompt('Palavra-passe do felipe@riocapital.pt:');
+  if (!pwd) return false;
+  const { error } = await client.auth.signInWithPassword({ email: 'felipe@riocapital.pt', password: pwd });
+  if (error) { alert('Login falhou: ' + error.message); return false; }
+  authed = true;
+  return true;
+}
+
+async function run() {
+  if (!await ensureAuth()) return;
+  const contaId = document.getElementById('conta').value;
+  const limit = parseInt(document.getElementById('limit').value) || 30;
+  if (!contaId) { alert('Escolhe uma conta primeiro'); return; }
+
+  logHtml('A carregar...');
+
+  // Top N by seq DESC NULLS LAST, data DESC
+  const { data, error } = await client
+    .from('movimentos')
+    .select('id, seq, data, movimento, valor, saldo')
+    .eq('conta_id', contaId)
+    .order('seq', { ascending: false, nullsFirst: false })
+    .order('data', { ascending: false })
+    .limit(limit);
+
+  if (error) { logHtml('<div class="err">❌ ' + error.message + '</div>'); return; }
+
+  // Count totals
+  const { count: total } = await client.from('movimentos').select('*', { count: 'exact', head: true }).eq('conta_id', contaId);
+  const { count: nullSeq } = await client.from('movimentos').select('*', { count: 'exact', head: true }).eq('conta_id', contaId).is('seq', null);
+
+  // Max & min seq
+  const { data: maxSeqData } = await client.from('movimentos').select('seq').eq('conta_id', contaId).order('seq', { ascending: false, nullsFirst: false }).limit(1);
+  const { data: minSeqData } = await client.from('movimentos').select('seq').eq('conta_id', contaId).order('seq', { ascending: true, nullsFirst: false }).limit(1);
+
+  let html = `<div class="info">📊 <strong>${contaId}</strong> · Total: ${total} · seq=NULL: ${nullSeq} · max seq: ${maxSeqData?.[0]?.seq ?? '-'} · min seq: ${minSeqData?.[0]?.seq ?? '-'}</div><br>`;
+  html += `<div class="info">Primeiros ${limit} (pela ordem do client):</div>`;
+  html += '<table><thead><tr><th>#</th><th>seq</th><th>data</th><th>descrição</th><th>valor</th><th>saldo</th></tr></thead><tbody>';
+  data.forEach((m, i) => {
+    const seqStr = m.seq === null ? '<span class="err">NULL</span>' : m.seq;
+    const valStr = (m.valor < 0 ? '<span class="err">' : '<span class="ok">+') + m.valor.toLocaleString('pt-PT', { minimumFractionDigits: 2 }) + '</span>';
+    html += `<tr><td>${i+1}</td><td>${seqStr}</td><td>${m.data}</td><td>${(m.movimento||'').substring(0,50)}</td><td style="text-align:right">${valStr}</td><td style="text-align:right">${(m.saldo||0).toLocaleString('pt-PT', { minimumFractionDigits: 2 })}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  logHtml(html);
+}
+
+async function searchDesc() {
+  if (!await ensureAuth()) return;
+  const contaId = document.getElementById('conta').value;
+  const q = document.getElementById('search').value.trim();
+  const dq = document.getElementById('dateSearch').value.trim();
+  if (!contaId) { alert('Escolhe uma conta primeiro'); return; }
+  if (!q && !dq) { alert('Escreve texto OU data para filtrar'); return; }
+
+  logHtml('A procurar...');
+  let query = client.from('movimentos')
+    .select('id, seq, data, movimento, valor, saldo')
+    .eq('conta_id', contaId);
+  if (q) query = query.ilike('movimento', `%${q}%`);
+  if (dq) query = query.eq('data', dq);
+  query = query.order('seq', { ascending: false, nullsFirst: false }).order('data', { ascending: false }).limit(500);
+
+  const { data, error } = await query;
+  if (error) { logHtml('<div class="err">❌ ' + error.message + '</div>'); return; }
+
+  let html = `<div class="info">🔍 <strong>${data.length}</strong> resultados em ${contaId}` + (q ? ` · desc="${q}"` : '') + (dq ? ` · data=${dq}` : '') + `:</div>`;
+  html += '<table><thead><tr><th>#</th><th>id</th><th>seq</th><th>data</th><th>descrição</th><th>valor</th><th>saldo</th></tr></thead><tbody>';
+  data.forEach((m, i) => {
+    const seqStr = m.seq === null ? '<span class="err">NULL</span>' : m.seq;
+    const valStr = (m.valor < 0 ? '<span class="err">' : '<span class="ok">+') + m.valor.toLocaleString('pt-PT', { minimumFractionDigits: 2 }) + '</span>';
+    html += `<tr><td>${i+1}</td><td style="font-size:9px;color:#888">${m.id.substring(0,8)}</td><td>${seqStr}</td><td>${m.data}</td><td>${(m.movimento||'').substring(0,50)}</td><td style="text-align:right">${valStr}</td><td style="text-align:right">${(m.saldo||0).toLocaleString('pt-PT', { minimumFractionDigits: 2 })}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  logHtml(html);
+}
+
+// Corrige o seq dos movimentos extras (Supabase mas não snapshot) atribuindo seq alto.
+// Para cada conta, encontra o max seq existente nos movimentos do snapshot,
+// depois atribui seq = maxSnapshotSeq + offset (mais recente = offset maior).
+async function fixExtras() {
+  if (!await ensureAuth()) return;
+  const contaId = document.getElementById('conta').value;
+  if (!contaId) {
+    if (!confirm('Sem conta seleccionada → vai correr para TODAS as contas. Continuar?')) return;
+  }
+  logHtml('A carregar snapshot...');
+
+  const resp = await fetch('/caixa_unico_v2.json');
+  const snap = await resp.json();
+
+  // Build map: conta_id → { sigs: Set, count: N }
+  const snapByConta = {};
+  for (const contas of Object.values(snap)) {
+    for (const c of contas) {
+      const sigs = new Set();
+      const movs = c.movimentos || [];
+      const norm = (s) => String(s == null ? '' : s).trim();
+      for (const m of movs) sigs.add(`${norm(m.data)}||${norm(m.movimento)}||${norm(m.valor)}`);
+      snapByConta[c.conta_id] = { sigs, count: movs.length };
+    }
+  }
+
+  const contaIds = contaId ? [contaId] : Object.keys(snapByConta);
+  let logHtmlStr = '';
+
+  let totalFixed = 0;
+  for (const cId of contaIds) {
+    const info = snapByConta[cId];
+    if (!info) {
+      logHtmlStr += `<div class="warn">⚠️ ${cId}: não está no snapshot, salto.</div>`;
+      logHtml(logHtmlStr); continue;
+    }
+
+    // Pull ALL movimentos for this conta
+    let all = [], offset = 0;
+    while (true) {
+      const { data, error } = await client.from('movimentos').select('id, seq, data, movimento, valor, saldo').eq('conta_id', cId).range(offset, offset + 999);
+      if (error || !data?.length) break;
+      all = all.concat(data);
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+
+    const norm = (s) => String(s == null ? '' : s).trim();
+    const sigKey = (m) => `${norm(m.data)}||${norm(m.movimento)}||${norm(m.valor)}`;
+
+    // Find extras (not in snapshot)
+    const extras = all.filter(m => !info.sigs.has(sigKey(m)));
+    // Find max seq among snapshot movs (so we know where to start)
+    const snapMovs = all.filter(m => info.sigs.has(sigKey(m)));
+    const maxSnapSeq = snapMovs.reduce((m, x) => Math.max(m, x.seq || 0), 0);
+
+    if (extras.length === 0) {
+      logHtmlStr += `<div class="ok">✅ ${cId}: 0 extras, nada para corrigir.</div>`;
+      logHtml(logHtmlStr); continue;
+    }
+
+    // Sort extras: most recent first (by date desc, then current seq desc as tiebreaker)
+    extras.sort((a, b) => b.data.localeCompare(a.data) || ((b.seq||0) - (a.seq||0)));
+
+    // Assign new seqs: most recent → highest
+    // newSeq = maxSnapSeq + 1000 + (extras.length - i)
+    // So they're all > all snapshot movs, ordered with most recent first
+    const base = maxSnapSeq + 1000;
+    const updates = extras.map((m, i) => ({
+      id: m.id,
+      oldSeq: m.seq,
+      newSeq: base + (extras.length - i),
+      data: m.data,
+      desc: m.movimento,
+    }));
+
+    logHtmlStr += `<div class="info">🔧 <strong>${cId}</strong>: ${extras.length} extras · max snap seq = ${maxSnapSeq} · novo seq base = ${base}</div>`;
+    logHtml(logHtmlStr);
+
+    // Apply updates
+    let okCount = 0, errCount = 0;
+    for (const u of updates) {
+      const { error } = await client.from('movimentos').update({ seq: u.newSeq }).eq('id', u.id);
+      if (error) { errCount++; console.error('update err:', error, u); }
+      else okCount++;
+    }
+    totalFixed += okCount;
+    logHtmlStr += `<div class="${errCount ? 'err' : 'ok'}">  → ${okCount} atualizados, ${errCount} erros</div>`;
+    logHtml(logHtmlStr);
+  }
+
+  logHtmlStr += `<br><div class="ok"><strong>🎉 Total corrigido: ${totalFixed} movimentos.</strong></div>`;
+  logHtml(logHtmlStr);
+}
+
+// Find movimentos in Supabase that do NOT exist in snapshot (= imports posteriores)
+async function findExtras() {
+  if (!await ensureAuth()) return;
+  const contaId = document.getElementById('conta').value;
+  if (!contaId) { alert('Escolhe uma conta primeiro'); return; }
+  logHtml('A carregar snapshot e Supabase...');
+
+  // Snapshot
+  const resp = await fetch('/caixa_unico_v2.json');
+  const snap = await resp.json();
+  let snapMovs = [];
+  for (const contas of Object.values(snap)) {
+    for (const c of contas) {
+      if (c.conta_id === contaId) {
+        snapMovs = c.movimentos || [];
+        break;
+      }
+    }
+  }
+  // Build snapshot signature set (data|desc|valor)
+  const norm = (s) => String(s == null ? '' : s).trim();
+  const sigKey = (m) => `${norm(m.data)}||${norm(m.movimento)}||${norm(m.valor)}`;
+  const snapSigs = new Set(snapMovs.map(sigKey));
+
+  // Pull all Supabase movimentos
+  let allDb = [], offset = 0;
+  while (true) {
+    const { data, error } = await client.from('movimentos').select('id, seq, data, movimento, valor, saldo').eq('conta_id', contaId).range(offset, offset + 999);
+    if (error || !data?.length) break;
+    allDb = allDb.concat(data);
+    if (data.length < 1000) break;
+    offset += 1000;
+  }
+
+  // Find extras
+  const extras = allDb.filter(m => !snapSigs.has(sigKey(m)));
+  // Sort by data, then seq
+  extras.sort((a, b) => b.data.localeCompare(a.data) || (b.seq || 0) - (a.seq || 0));
+
+  let html = `<div class="info">📊 Snapshot: <strong>${snapMovs.length}</strong> · Supabase: <strong>${allDb.length}</strong> · Diferença: <strong>${allDb.length - snapMovs.length}</strong></div>`;
+  html += `<div class="${extras.length > 0 ? 'warn' : 'ok'}">⚠️ Movimentos na Supabase que NÃO estão no snapshot: <strong>${extras.length}</strong></div><br>`;
+  if (extras.length === 0) {
+    html += '<div class="ok">✨ Tudo bate certo.</div>';
+  } else {
+    html += '<table><thead><tr><th>#</th><th>id</th><th>seq</th><th>data</th><th>descrição</th><th>valor</th><th>saldo</th></tr></thead><tbody>';
+    extras.forEach((m, i) => {
+      const seqStr = m.seq === null ? '<span class="err">NULL</span>' : m.seq;
+      const valStr = (m.valor < 0 ? '<span class="err">' : '<span class="ok">+') + m.valor.toLocaleString('pt-PT', { minimumFractionDigits: 2 }) + '</span>';
+      html += `<tr><td>${i+1}</td><td style="font-size:9px;color:#888">${m.id.substring(0,8)}</td><td>${seqStr}</td><td>${m.data}</td><td>${(m.movimento||'').substring(0,50)}</td><td style="text-align:right">${valStr}</td><td style="text-align:right">${(m.saldo||0).toLocaleString('pt-PT', { minimumFractionDigits: 2 })}</td></tr>`;
+    });
+    html += '</tbody></table>';
+  }
+  logHtml(html);
+}
+
+async function findDups() {
+  if (!await ensureAuth()) return;
+  const contaId = document.getElementById('conta').value;
+  if (!contaId) { alert('Escolhe uma conta primeiro'); return; }
+
+  logHtml('A procurar duplicados... (pode demorar)');
+
+  // Pull ALL movimentos for this conta
+  let all = [], offset = 0;
+  while (true) {
+    const { data, error } = await client
+      .from('movimentos')
+      .select('id, seq, data, movimento, valor, saldo')
+      .eq('conta_id', contaId)
+      .range(offset, offset + 999);
+    if (error) { logHtml('<div class="err">❌ ' + error.message + '</div>'); return; }
+    if (!data?.length) break;
+    all = all.concat(data);
+    if (data.length < 1000) break;
+    offset += 1000;
+  }
+
+  // Group by signature: data|movimento|valor|saldo
+  const groups = {};
+  for (const m of all) {
+    const sig = `${m.data}||${m.movimento}||${m.valor}||${m.saldo}`;
+    if (!groups[sig]) groups[sig] = [];
+    groups[sig].push(m);
+  }
+
+  // Also try looser signature (without saldo) for cases where saldo differs only by rounding
+  const looseGroups = {};
+  for (const m of all) {
+    const sig = `${m.data}||${(m.movimento||'').trim()}||${m.valor}`;
+    if (!looseGroups[sig]) looseGroups[sig] = [];
+    looseGroups[sig].push(m);
+  }
+
+  const dupGroups = Object.entries(groups).filter(([_, arr]) => arr.length > 1);
+  const looseDupGroups = Object.entries(looseGroups).filter(([_, arr]) => arr.length > 1);
+
+  let html = `<div class="info">📊 Total: <strong>${all.length}</strong> movimentos em ${contaId}</div>`;
+  html += `<div class="${dupGroups.length ? 'err' : 'ok'}">🎯 Duplicados EXATOS (data+desc+valor+saldo): <strong>${dupGroups.length}</strong> grupos (${dupGroups.reduce((s,[_,a]) => s+a.length, 0)} linhas no total)</div>`;
+  html += `<div class="${looseDupGroups.length > dupGroups.length ? 'warn' : 'ok'}">🔎 Duplicados POR DESCRIÇÃO (data+desc+valor, ignora saldo): <strong>${looseDupGroups.length}</strong> grupos (${looseDupGroups.reduce((s,[_,a]) => s+a.length, 0)} linhas)</div><br>`;
+
+  // Show groups (loose set, max 50 first)
+  const showGroups = looseDupGroups.slice(0, 50);
+  if (showGroups.length === 0) {
+    html += '<div class="ok">✨ Sem duplicados detectados.</div>';
+  } else {
+    html += '<table><thead><tr><th>grupo</th><th>id</th><th>seq</th><th>data</th><th>descrição</th><th>valor</th><th>saldo</th></tr></thead><tbody>';
+    showGroups.forEach(([sig, arr], gi) => {
+      arr.forEach((m, i) => {
+        const seqStr = m.seq === null ? '<span class="err">NULL</span>' : m.seq;
+        const valStr = (m.valor < 0 ? '<span class="err">' : '<span class="ok">+') + m.valor.toLocaleString('pt-PT', { minimumFractionDigits: 2 }) + '</span>';
+        const grpCol = i === 0 ? `<strong>${gi+1}</strong> (${arr.length}×)` : '';
+        const sep = i === arr.length - 1 ? 'border-bottom:2px solid #C8A96E' : '';
+        html += `<tr style="${sep}"><td>${grpCol}</td><td style="font-size:9px;color:#888">${m.id.substring(0,8)}</td><td>${seqStr}</td><td>${m.data}</td><td>${(m.movimento||'').substring(0,50)}</td><td style="text-align:right">${valStr}</td><td style="text-align:right">${(m.saldo||0).toLocaleString('pt-PT', { minimumFractionDigits: 2 })}</td></tr>`;
+      });
+    });
+    html += '</tbody></table>';
+    if (looseDupGroups.length > 50) html += `<div class="warn">...mais ${looseDupGroups.length - 50} grupos não mostrados</div>`;
+  }
+  logHtml(html);
+}
+
+async function stats() {
+  if (!await ensureAuth()) return;
+  logHtml('A calcular estatísticas globais...');
+
+  const contas = Array.from(document.getElementById('conta').options).slice(1).map(o => ({ id: o.value, label: o.textContent }));
+
+  let html = '<table><thead><tr><th>Conta</th><th>Total</th><th>NULL seq</th><th>Max seq</th><th>Min seq</th><th>seq único?</th></tr></thead><tbody>';
+  for (const c of contas) {
+    const { count: total } = await client.from('movimentos').select('*', { count: 'exact', head: true }).eq('conta_id', c.id);
+    if (!total) continue;
+    const { count: nullSeq } = await client.from('movimentos').select('*', { count: 'exact', head: true }).eq('conta_id', c.id).is('seq', null);
+    const { data: mx } = await client.from('movimentos').select('seq').eq('conta_id', c.id).order('seq', { ascending: false, nullsFirst: false }).limit(1);
+    const { data: mn } = await client.from('movimentos').select('seq').eq('conta_id', c.id).order('seq', { ascending: true, nullsFirst: false }).limit(1);
+    const { data: allSeqs } = await client.from('movimentos').select('seq').eq('conta_id', c.id).not('seq', 'is', null);
+    const uniq = new Set((allSeqs||[]).map(x => x.seq)).size;
+    const nonNullCount = (allSeqs||[]).length;
+    const uniqStr = uniq === nonNullCount ? '<span class="ok">sim</span>' : `<span class="err">${nonNullCount - uniq} colisões</span>`;
+    html += `<tr><td>${c.label}</td><td>${total}</td><td>${nullSeq||0}</td><td>${mx?.[0]?.seq ?? '-'}</td><td>${mn?.[0]?.seq ?? '-'}</td><td>${uniqStr}</td></tr>`;
+    document.getElementById('log').innerHTML = html + '</tbody></table>';
+  }
+  document.getElementById('log').innerHTML = html + '</tbody></table>';
+}
+</script>
+</body>
+</html>

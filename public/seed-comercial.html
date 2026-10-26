@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head><title>Seed Comercial — Rio Capital</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:700px;margin:0 auto}
+  h1{color:#C8A96E}
+  button{background:#C8A96E;border:none;padding:12px 24px;font-size:15px;cursor:pointer;border-radius:8px;font-weight:bold;margin:8px 4px}
+  button:disabled{opacity:0.5;cursor:default}
+  #log{background:#1a1a2e;padding:20px;border-radius:8px;height:350px;overflow-y:auto;margin-top:20px;font-size:12px;line-height:1.9}
+  .ok{color:#16a34a}.err{color:#dc2626}.info{color:#C8A96E}
+</style>
+</head>
+<body>
+<h1>🌱 Seed Comercial → Supabase</h1>
+<p>Carrega as 60 frações e 60 vendas para o Supabase.</p>
+<button id="btn" onclick="run()">▶ Iniciar Seed</button>
+<div id="log"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const db = supabase.createClient(URL, KEY);
+
+function log(msg, cls='info') {
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="${cls}">${new Date().toLocaleTimeString()} — ${msg}</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+async function run() {
+  const btn = document.getElementById('btn');
+  btn.disabled = true;
+
+  const pwd = prompt('Senha do felipe@riocapital.pt:');
+  if (!pwd) { btn.disabled = false; return; }
+
+  const { error: ae } = await db.auth.signInWithPassword({ email: 'felipe@riocapital.pt', password: pwd });
+  if (ae) { log('❌ Login falhou: ' + ae.message, 'err'); btn.disabled = false; return; }
+  log('✅ Login OK', 'ok');
+
+  log('A carregar comercial_data.json...');
+  const data = await fetch('/comercial_data.json').then(r => r.json());
+  log(`📦 ${data.fracoes.length} frações + ${data.vendas.length} vendas`);
+
+  // Clear existing
+  log('A limpar dados antigos...');
+  await db.from('vendas').delete().neq('id', 'x');
+  await db.from('fracoes').delete().neq('id', 'x');
+
+  // Insert fracoes
+  log('A inserir frações...');
+  const { error: fe } = await db.from('fracoes').insert(data.fracoes);
+  if (fe) log(`❌ Erro frações: ${fe.message}`, 'err');
+  else log(`✅ ${data.fracoes.length} frações inseridas`, 'ok');
+
+  // Insert vendas in chunks
+  log('A inserir vendas...');
+  let inserted = 0;
+  for (let i = 0; i < data.vendas.length; i += 20) {
+    const chunk = data.vendas.slice(i, i + 20);
+    const { error: ve } = await db.from('vendas').insert(chunk);
+    if (ve) { log(`❌ Erro vendas lote ${Math.floor(i/20)+1}: ${ve.message}`, 'err'); break; }
+    inserted += chunk.length;
+    log(`✅ Vendas: ${inserted}/${data.vendas.length}`, 'ok');
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  log('🎉 CONCLUÍDO! Podes fechar esta página e recarregar o ERP.', 'ok');
+  btn.disabled = false;
+}
+</script>
+</body>
+</html>

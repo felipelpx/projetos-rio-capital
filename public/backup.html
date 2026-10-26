@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+<head><title>Backup Completo — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:1100px;margin:0 auto;line-height:1.5}
+  h1{color:#C8A96E}
+  button{background:#C8A96E;border:none;padding:12px 24px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px}
+  button:disabled{opacity:0.5;cursor:default}
+  button.big{padding:16px 32px;font-size:16px}
+  .desc{background:#1a1a2e;padding:14px;border-radius:8px;border-left:4px solid #C8A96E;margin:12px 0;font-size:12px}
+  #log{background:#1a1a2e;padding:18px;border-radius:8px;max-height:600px;overflow-y:auto;margin-top:18px;font-size:12px;line-height:1.7}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{padding:7px 10px;border-bottom:1px solid #2a2a3e;text-align:left}
+  th{color:#C8A96E;background:#1a1a2e}
+  .ok{color:#16a34a}.err{color:#dc2626}.info{color:#C8A96E}.warn{color:#f59e0b}.muted{color:#888}
+  .num{text-align:right;font-family:monospace}
+  .progress{display:inline-block;width:14px;height:14px;border:2px solid #C8A96E;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;vertical-align:middle;margin-right:6px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<h1>💾 Backup Completo da Base de Dados</h1>
+
+<div class="desc">
+  Descarrega <strong>tudo</strong> o que existe nas tabelas principais do Supabase como um único ficheiro JSON com timestamp. Útil como ponto de restauro antes de operações destrutivas, ou só para arquivo.<br><br>
+  <strong>Tabelas incluídas:</strong> movimentos, faturas, pagamentos_extras, vendas, fracoes, entidades, contas, orcamento, profiles.<br>
+  <strong>Não inclui:</strong> dados do auth (utilizadores/passwords) — esses ficam só no Supabase Auth.
+</div>
+
+<div style="margin-top:20px">
+  <button onclick="fazerBackup()" class="big" id="btn">⬇ Fazer backup agora</button>
+  <span id="status" class="muted" style="margin-left:14px"></span>
+</div>
+
+<div id="log"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const TABELAS = [
+  'movimentos',
+  'faturas',
+  'pagamentos_extras',
+  'vendas',
+  'fracoes',
+  'entidades',
+  'contas',
+  'orcamento',
+  'mapas_pagamento',
+  'mapas_pagamento_itens',
+  'profiles',
+];
+
+let authed = false;
+async function ensureAuth() {
+  if (authed) return true;
+  const pwd = prompt('Palavra-passe do felipe@riocapital.pt:');
+  if (!pwd) return false;
+  const { error } = await client.auth.signInWithPassword({ email: 'felipe@riocapital.pt', password: pwd });
+  if (error) { alert('Login falhou: ' + error.message); return false; }
+  authed = true;
+  return true;
+}
+
+async function fetchAll(table) {
+  let all = [], from = 0;
+  while (true) {
+    const { data, error } = await client.from(table).select('*').range(from, from + 999);
+    if (error) return { data: [], error };
+    if (!data?.length) break;
+    all = all.concat(data);
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+  return { data: all, error: null };
+}
+
+async function fazerBackup() {
+  if (!await ensureAuth()) return;
+  const btn = document.getElementById('btn');
+  const status = document.getElementById('status');
+  const log = document.getElementById('log');
+  btn.disabled = true;
+
+  const backup = {
+    timestamp: new Date().toISOString(),
+    timestamp_local: new Date().toLocaleString('pt-PT'),
+    tables: {},
+    summary: {},
+  };
+
+  let html = '<table><thead><tr><th>tabela</th><th class="num">registos</th><th>estado</th></tr></thead><tbody>';
+  log.innerHTML = html + '</tbody></table>';
+
+  for (const table of TABELAS) {
+    status.innerHTML = `<span class="progress"></span>A descarregar <strong>${table}</strong>...`;
+    status.className = 'info';
+    // Update placeholder row
+    html += `<tr id="row_${table}"><td>${table}</td><td class="num"><span class="progress"></span></td><td class="muted">a carregar...</td></tr>`;
+    log.innerHTML = html + '</tbody></table>';
+
+    const { data, error } = await fetchAll(table);
+
+    // Replace row
+    if (error) {
+      backup.summary[table] = { count: 0, error: error.message };
+      html = html.replace(`<tr id="row_${table}"><td>${table}</td><td class="num"><span class="progress"></span></td><td class="muted">a carregar...</td></tr>`,
+        `<tr><td>${table}</td><td class="num">0</td><td class="err">❌ ${error.message}</td></tr>`);
+    } else {
+      backup.tables[table] = data;
+      backup.summary[table] = { count: data.length };
+      html = html.replace(`<tr id="row_${table}"><td>${table}</td><td class="num"><span class="progress"></span></td><td class="muted">a carregar...</td></tr>`,
+        `<tr><td>${table}</td><td class="num">${data.length}</td><td class="ok">✅</td></tr>`);
+    }
+    log.innerHTML = html + '</tbody></table>';
+  }
+
+  // Total
+  const totalRecs = Object.values(backup.summary).reduce((s, v) => s + (v.count || 0), 0);
+  const totalErrors = Object.values(backup.summary).filter(v => v.error).length;
+  html += `<tr style="background:#0f0f1a;font-weight:bold"><td>TOTAL</td><td class="num">${totalRecs.toLocaleString('pt-PT')}</td><td class="${totalErrors?'warn':'ok'}">${totalErrors ? `${totalErrors} tabelas com erro` : 'tudo OK'}</td></tr>`;
+  log.innerHTML = html + '</tbody></table>';
+
+  // Gerar JSON e descarregar
+  status.innerHTML = '<span class="progress"></span>A gerar ficheiro...';
+  const json = JSON.stringify(backup, null, 2);
+  const sizeMB = (json.length / 1024 / 1024).toFixed(2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  a.download = `rio-capital-backup-${ts}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+
+  status.innerHTML = `✅ Descarregado · <strong>${totalRecs.toLocaleString('pt-PT')}</strong> registos · ${sizeMB} MB`;
+  status.className = 'ok';
+  btn.disabled = false;
+  btn.textContent = '⬇ Fazer outro backup';
+}
+</script>
+</body>
+</html>

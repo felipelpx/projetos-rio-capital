@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="pt">
+  <head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no"/>
+    <title>Rio Capital — ERP</title>
+    <link rel="icon" type="image/png" href="/favicon.png"/>
+    <style>
+      :root { color-scheme: light; }
+      html[data-theme="dark"] { color-scheme: dark; }
+      html[data-theme="dark"] body { background: #0f0f1a !important; }
+      /* Inverte todos os elementos da app, depois desfaz a inversão nas imagens
+         e PDFs para que continuem a aparecer com cores naturais. */
+      html[data-theme="dark"] #root {
+        filter: invert(0.92) hue-rotate(180deg);
+      }
+      /* O logótipo é monocromático: em modo escuro deve acompanhar a inversão
+         do resto da interface (preto → branco), ao contrário das fotografias. */
+      html[data-theme="dark"] #root img.logo-rio { filter: none !important; }
+      html[data-theme="dark"] #root img,
+      html[data-theme="dark"] #root iframe,
+      html[data-theme="dark"] #root video,
+      html[data-theme="dark"] #root canvas,
+      html[data-theme="dark"] #root svg image {
+        filter: invert(1) hue-rotate(180deg);
+      }
+      /* Suaviza a transição quando o utilizador troca de tema */
+      html { transition: background-color 0.2s; }
+      #root { transition: filter 0.2s; }
+
+      /* ────── Adaptação mobile (até 768px) ────── */
+      @media (max-width: 768px) {
+        body { font-size: 14px; }
+        /* Tabelas sempre com scroll horizontal */
+        table { font-size: 11px !important; }
+        /* Padding mais comprimido em containers grandes */
+        #root > div { padding: 8px !important; }
+        /* Grids forçados a 2 colunas no mobile (em vez de 4-5) */
+        div[style*="grid-template-columns: repeat(5"],
+        div[style*="grid-template-columns: repeat(4"],
+        div[style*="grid-template-columns: repeat(3"] {
+          grid-template-columns: repeat(2, 1fr) !important;
+        }
+        /* Botões e elementos da navbar com flex-wrap forçado */
+        nav, header { flex-wrap: wrap !important; }
+      }
+      /* Permitir tabelas com scroll horizontal sempre */
+      .responsive-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    </style>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f5f7;">
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

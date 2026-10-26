@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head><meta charset="utf-8"><title>Importar Entidades — Rio Capital ERP</title>
+<style>
+  body{font-family:monospace;padding:30px;background:#0f0f1a;color:#fff;max-width:1100px;margin:0 auto;line-height:1.5}
+  h1{color:#C8A96E}
+  button{background:#C8A96E;border:none;padding:12px 24px;font-size:14px;cursor:pointer;border-radius:8px;font-weight:bold;margin:5px;color:#0f0f1a}
+  button:disabled{opacity:0.4;cursor:default}
+  button.big{padding:16px 32px;font-size:16px}
+  .desc{background:#1a1a2e;padding:14px;border-radius:8px;border-left:4px solid #C8A96E;margin:12px 0;font-size:12px}
+  #log{background:#1a1a2e;padding:18px;border-radius:8px;max-height:520px;overflow-y:auto;margin-top:18px;font-size:12px}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{padding:7px 10px;border-bottom:1px solid #2a2a3e;text-align:left}
+  th{color:#C8A96E;background:#1a1a2e}
+  .ok{color:#16a34a}.err{color:#dc2626}.info{color:#C8A96E}.warn{color:#f59e0b}.muted{color:#888}
+  .num{text-align:right}
+</style>
+</head>
+<body>
+<h1>🏢 Importar Entidades</h1>
+
+<div class="desc">
+  Carrega a lista de <strong>fornecedores, clientes e empresas</strong> para a
+  base de dados de Entidades.<br><br>
+  Podes escolher o teu <code>.xlsx</code> (colunas <em>Tipo, Nome / Designação,
+  Nome Fantasia, NIF, Email, Telefone, IBAN, Morada, Categoria</em>) ou usar a
+  cópia que veio com o site.<br><br>
+  <strong>Não duplica.</strong> Antes de inserir compara com o que já existe,
+  pelo NIF quando há, senão pelo nome. Podes correr mais do que uma vez.
+</div>
+
+<div class="desc">
+  <strong>Antes:</strong> a coluna do nome comercial tem de existir. No SQL
+  Editor do Supabase:<br><br>
+  <code style="color:#C8A96E">alter table entidades add column if not exists nome_fantasia text;<br>
+  alter table entidades add column if not exists categoria text;</code>
+</div>
+
+<div class="desc">
+  <input type="file" id="ficheiro" accept=".xlsx,.xlsm" onchange="ficheiroEscolhido()" style="color:#fff">
+  <span id="infoFicheiro" class="muted"></span>
+</div>
+
+<div style="margin-top:20px">
+  <button onclick="verificar()" id="btnV">1 · Verificar</button>
+  <button onclick="importar()" id="btnI" class="big" disabled>2 · Importar</button>
+  <span id="status" class="muted" style="margin-left:14px"></span>
+</div>
+
+<div id="log"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+const SUPABASE_URL = 'https://esymjdrvcpwsoevnqljq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wwQ5479wErQBOzCY-LIcZQ_ORo6VhUW';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const log = (html, cls = '') => {
+  document.getElementById('log').insertAdjacentHTML('beforeend', `<div class="${cls}">${html}</div>`);
+  document.getElementById('log').scrollTop = 1e9;
+};
+const setStatus = (t) => document.getElementById('status').textContent = t;
+
+let DADOS = null, NOVAS = [], temFantasia = true, temCategoria = true;
+
+const chave = (e) => (e.nif && String(e.nif).replace(/\D/g, ''))
+  || String(e.nome || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+
+let authed = false;
+async function ensureAuth() {
+  if (authed) return true;
+  const pwd = prompt('Palavra-passe do felipe@riocapital.pt:');
+  if (!pwd) return false;
+  const { error } = await sb.auth.signInWithPassword({ email: 'felipe@riocapital.pt', password: pwd });
+  if (error) { log('✗ Autenticação falhou: ' + error.message, 'err'); return false; }
+  authed = true; return true;
+}
+
+function ficheiroEscolhido() {
+  const f = document.getElementById('ficheiro').files[0];
+  DADOS = null;
+  document.getElementById('btnI').disabled = true;
+  document.getElementById('infoFicheiro').textContent =
+    f ? `${f.name} — clica em Verificar` : '';
+}
+
+function lerWorkbook(wb) {
+  const TIPOS = ['Fornecedor', 'Cliente', 'Empresa'];
+  const linhas = [];
+  for (const aba of wb.SheetNames) {
+    const g = XLSX.utils.sheet_to_json(wb.Sheets[aba], { header: 1, raw: true, defval: null });
+    const hi = g.findIndex(r => r && r.some(c => /nome/i.test(String(c || ''))));
+    if (hi < 0) continue;
+    const hdr = g[hi].map(c => String(c || '').trim());
+    const col = (re) => hdr.findIndex(h => re.test(h));
+    const iNome = col(/^nome\s*\/|^nome$|designação/i);
+    if (iNome < 0) continue;
+    const iTipo = col(/^tipo/i), iFant = col(/fantasia|comercial/i), iNif = col(/^nif|contribuinte/i);
+    const iMail = col(/mail/i), iTel = col(/telefone|contacto/i), iIban = col(/iban/i);
+    const iMor = col(/morada|endere/i), iCat = col(/categoria/i), iMotivo = col(/motivo/i);
+    for (let i = hi + 1; i < g.length; i++) {
+      const r = g[i];
+      if (!r || !r[iNome]) continue;
+      const v = (j) => (j >= 0 && r[j] != null ? String(r[j]).trim() : '');
+      let tipo = v(iTipo);
+      if (!TIPOS.includes(tipo)) tipo = 'Fornecedor';
+      linhas.push({
+        tipo, nome: v(iNome), nome_fantasia: v(iFant), nif: v(iNif),
+        email: v(iMail), telefone: v(iTel), iban: v(iIban), morada: v(iMor),
+        categoria: v(iCat), notas: v(iMotivo),
+      });
+    }
+  }
+  return linhas;
+}
+
+async function carregarDados() {
+  if (DADOS) return DADOS;
+  const f = document.getElementById('ficheiro').files[0];
+  if (!f) {
+    const r = await fetch('/entidades_seed.json');
+    DADOS = await r.json();
+    log('· A usar a cópia incluída no site', 'muted');
+    return DADOS;
+  }
+  const wb = XLSX.read(await f.arrayBuffer(), { cellDates: true });
+  DADOS = lerWorkbook(wb);
+  log(`✓ Lido de <strong>${f.name}</strong>`, 'ok');
+  return DADOS;
+}
+
+async function verificar() {
+  document.getElementById('log').innerHTML = '';
+  if (!await ensureAuth()) return;
+  setStatus('a verificar…');
+
+  const d = await carregarDados();
+  log(`✓ Ficheiro: <strong>${d.length}</strong> entidades`, 'ok');
+
+  const { error: e1 } = await sb.from('entidades').select('nome_fantasia').limit(1);
+  temFantasia = !e1;
+  const { error: e2 } = await sb.from('entidades').select('categoria').limit(1);
+  temCategoria = !e2;
+  if (e2) log('⚠ A coluna <code>categoria</code> não existe — a importação avança sem as categorias.', 'warn');
+  else log('✓ A coluna <code>categoria</code> existe', 'ok');
+  if (e1) {
+    log('⚠ A coluna <code>nome_fantasia</code> não existe. A importação avança à mesma, '
+      + 'mas <strong>sem os nomes comerciais</strong>.', 'warn');
+    log('Para os guardar, corre isto no SQL Editor e repete a importação:', 'muted');
+    log('<div class="desc"><code style="color:#C8A96E">'
+      + 'alter table entidades add column if not exists nome_fantasia text;</code></div>');
+  } else log('✓ A coluna <code>nome_fantasia</code> existe', 'ok');
+
+  const { data: existentes } = await sb.from('entidades').select('id,nome,nif');
+  const jaLa = new Set((existentes || []).map(chave));
+  log(`✓ Já existem <strong>${(existentes || []).length}</strong> entidades na base`, 'ok');
+
+  NOVAS = d.filter(e => !jaLa.has(chave(e)));
+  const porTipo = {};
+  NOVAS.forEach(e => { porTipo[e.tipo] = (porTipo[e.tipo] || 0) + 1; });
+
+  let h = '<table><tr><th>tipo</th><th class="num">a inserir</th></tr>';
+  Object.entries(porTipo).forEach(([t, n]) => { h += `<tr><td>${t}</td><td class="num ok">${n}</td></tr>`; });
+  h += `<tr style="background:#1a1a2e;font-weight:bold"><td>TOTAL</td><td class="num info">${NOVAS.length}</td></tr>`;
+  h += `<tr><td class="muted">já existiam</td><td class="num muted">${d.length - NOVAS.length}</td></tr></table>`;
+  log(h);
+
+  if (NOVAS.length) {
+    log('<br>Primeiras a inserir:', 'muted');
+    let p = '<table><tr><th>tipo</th><th>razão social</th><th>nome comercial</th><th>NIF</th></tr>';
+    NOVAS.slice(0, 8).forEach(e => {
+      p += `<tr><td>${e.tipo}</td><td>${e.nome}</td><td class="muted">${e.nome_fantasia || '—'}</td><td class="muted">${e.nif || '—'}</td></tr>`;
+    });
+    log(p + '</table>');
+  }
+
+  document.getElementById('btnI').disabled = !NOVAS.length;
+  setStatus('pronto');
+}
+
+async function importar() {
+  if (!NOVAS.length) return;
+  if (!confirm(`Inserir ${NOVAS.length} entidades?\n\nNada é apagado; as que já existem foram ignoradas.`)) return;
+  document.getElementById('btnI').disabled = true;
+  setStatus('a importar…');
+
+  let n = 0, erros = 0;
+  for (let i = 0; i < NOVAS.length; i += 100) {
+    const lote = NOVAS.slice(i, i + 100).map((e, j) => {
+      const linha = { ...e, id: 'ent_' + Date.now() + '_' + (i + j) };
+      if (!temFantasia) delete linha.nome_fantasia;   // coluna ainda não existe
+      if (!temCategoria) delete linha.categoria;
+      return linha;
+    });
+    const { data, error } = await sb.from('entidades').insert(lote).select('id');
+    if (error) { erros++; log(`✗ lote ${i / 100 + 1}: ${error.message}`, 'err'); }
+    else { n += (data || []).length; setStatus(`${n} inseridas…`); }
+  }
+
+  if (n < NOVAS.length && !erros) {
+    log('⚠ Foram pedidas ' + NOVAS.length + ' e entraram ' + n + '. Falta política de INSERT na tabela entidades:', 'err');
+    log('<div class="desc"><code style="color:#C8A96E">create policy "insert entidades" on entidades<br>'
+      + '&nbsp;&nbsp;for insert to authenticated with check (true);</code></div>');
+  } else {
+    log(`<br><strong>${n} entidades inseridas${erros ? `, ${erros} lotes com erro` : ''}.</strong>`, erros ? 'warn' : 'ok');
+    if (!temFantasia) log('Os nomes comerciais ficaram de fora. Cria a coluna e volta a correr — '
+      + 'as que já existem são ignoradas, só os nomes comerciais é que faltam preencher.', 'warn');
+    log('Abre o separador Entidades no ERP para as ver.', 'info');
+  }
+  document.getElementById('btnI').disabled = false;
+  setStatus('concluído');
+}
+</script>
+</body>
+</html>
